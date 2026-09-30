@@ -1,13 +1,15 @@
-.PHONY: help install test run-server run-fake clean pio-build
+.PHONY: help install test run-server run-fake clean pio-build build-dashboard verify-dashboard
 
 help:
 	@echo "Available commands:"
-	@echo "  make install     Install Python dependencies in virtualenv"
-	@echo "  make test        Run pytest test suite"
-	@echo "  make run-server  Start local FastAPI server on port 8000"
-	@echo "  make run-fake    Run fake tracker simulation"
-	@echo "  make pio-build   Build PlatformIO firmware"
-	@echo "  make clean       Remove temporary files"
+	@echo "  make install         Install Python dependencies in virtualenv"
+	@echo "  make test            Run pytest test suite"
+	@echo "  make build-dashboard Build Vite + TypeScript + Three.js dashboard"
+	@echo "  make verify-dashboard Run live 3-roles dashboard verification test"
+	@echo "  make run-server      Start local FastAPI server on port 8000"
+	@echo "  make run-fake        Run fake tracker simulation"
+	@echo "  make pio-build       Build PlatformIO firmware"
+	@echo "  make clean           Remove temporary files"
 
 install:
 	python3 -m venv .venv
@@ -16,6 +18,12 @@ install:
 test:
 	. .venv/bin/activate && pytest -v
 
+build-dashboard:
+	cd dashboard && npm run build
+
+verify-dashboard:
+	. .venv/bin/activate && python3 tests/verify_live_3_roles.py
+
 run-server:
 	. .venv/bin/activate && uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
 
@@ -23,7 +31,7 @@ run-fake:
 	. .venv/bin/activate && python3 tools/fake_tracker.py --server http://localhost:8000 --roles required
 
 pio-build:
-	cd firmware && pio run
+	cd firmware && . ../.venv/bin/activate && pio run
 
 clean:
 	rm -rf .pytest_cache __pycache__ server/__pycache__ tools/__pycache__ tests/__pycache__

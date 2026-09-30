@@ -63,6 +63,8 @@ class TrackerManager:
         self.role_to_device: Dict[str, str] = {}
         # Dashboard WebSocket viewers
         self.dashboard_viewers: Set[WebSocket] = set()
+        self.last_broadcast_sample_time: Dict[str, float] = {}
+        self.cached_announced_telemetry: Dict[str, Dict[str, Any]] = {}
 
         # Active Session
         self.active_session_id: Optional[str] = None
@@ -70,6 +72,18 @@ class TrackerManager:
         self.active_session_name: Optional[str] = None
         self.parquet_writer: Optional[SessionParquetWriter] = None
         self.session_started_ms: Optional[int] = None
+
+    def cache_announced_telemetry(self, device_id: str, battery_pct: Optional[int], battery_mv: Optional[int]):
+        self.cached_announced_telemetry[device_id] = {
+            "battery_pct": battery_pct,
+            "battery_mv": battery_mv,
+        }
+        if device_id in self.active_connections:
+            conn = self.active_connections[device_id]
+            if battery_pct is not None:
+                conn.battery_pct = battery_pct
+            if battery_mv is not None:
+                conn.battery_mv = battery_mv
 
     async def connect_tracker(self, device_id: str, role: str, token: str, ws: WebSocket) -> TrackerConnection:
         # If another device is already streaming with this role, disconnect previous or reject
@@ -84,12 +98,19 @@ class TrackerManager:
                 del self.active_connections[old_dev_id]
 
         conn = TrackerConnection(device_id=device_id, role=role, token=token, ws=ws)
+        if device_id in self.cached_announced_telemetry:
+            cached = self.cached_announced_telemetry[device_id]
+            conn.battery_pct = cached.get("battery_pct")
+            conn.battery_mv = cached.get("battery_mv")
+
         self.active_connections[device_id] = conn
         self.role_to_device[role] = device_id
         db.update_last_seen(device_id)
 
         # Notify dashboard
-        await self.broadcast_dashboard({"type": "device_connected", "device": conn.to_dict()})
+        device_dict = conn.to_dict()
+        await self.broadcast_dashboard({"type": "device_connected", "device": device_dict})
+        await self.broadcast_dashboard({"type": "device_state", **device_dict})
         return conn
 
     async def disconnect_tracker(self, device_id: str):
@@ -98,6 +119,19 @@ class TrackerManager:
             if conn.role in self.role_to_device and self.role_to_device[conn.role] == device_id:
                 del self.role_to_device[conn.role]
             await self.broadcast_dashboard({"type": "device_disconnected", "device_id": device_id, "role": conn.role})
+            await self.broadcast_dashboard({
+                "type": "device_state",
+                "device_id": device_id,
+                "role": conn.role,
+                "role_id": conn.role_id,
+                "online": False,
+                "battery_pct": None,
+                "battery_mv": None,
+                "rssi": None,
+                "loss_pct": conn.loss_pct,
+                "last_seen_ms": conn.last_seen_ms,
+                "uptime_s": None,
+            })
 
     def get_online_roles(self) -> Set[str]:
         return set(self.role_to_device.keys())
@@ -182,18 +216,35 @@ class TrackerManager:
                     mag_z=sample.mag_z,
                 )
 
-        # Broadcast live sample to dashboard viewers (fan-out)
+        # Broadcast live sample to dashboard viewers (throttled to 60 Hz per device)
         if self.dashboard_viewers and frame.samples:
-            latest = frame.samples[-1]
-            await self.broadcast_dashboard({
-                "type": "pose_update",
-                "device_id": device_id,
-                "role": conn.role,
-                "seq": latest.seq,
-                "t_ms": latest.t_ms,
-                "quat": [latest.quat_w, latest.quat_x, latest.quat_y, latest.quat_z],
-                "loss_pct": conn.loss_pct,
-            })
+            now_mono = time.monotonic()
+            last_broadcast = self.last_broadcast_sample_time.get(device_id, 0.0)
+            if (now_mono - last_broadcast) >= (1.0 / 60.0):
+                self.last_broadcast_sample_time[device_id] = now_mono
+                latest = frame.samples[-1]
+                sample_msg = {
+                    "type": "sample",
+                    "device_id": device_id,
+                    "role": conn.role,
+                    "seq": latest.seq,
+                    "t_ms": latest.t_ms,
+                    "quat": [latest.quat_w, latest.quat_x, latest.quat_y, latest.quat_z],
+                    "accel": [latest.accel_x, latest.accel_y, latest.accel_z] if latest.accel_x is not None else None,
+                    "gyro": [latest.gyro_x, latest.gyro_y, latest.gyro_z] if latest.gyro_x is not None else None,
+                    "mag": [latest.mag_x, latest.mag_y, latest.mag_z] if latest.mag_x is not None else None,
+                    "loss_pct": conn.loss_pct,
+                }
+                await self.broadcast_dashboard(sample_msg)
+                await self.broadcast_dashboard({
+                    "type": "pose_update",
+                    "device_id": device_id,
+                    "role": conn.role,
+                    "seq": latest.seq,
+                    "t_ms": latest.t_ms,
+                    "quat": [latest.quat_w, latest.quat_x, latest.quat_y, latest.quat_z],
+                    "loss_pct": conn.loss_pct,
+                })
 
     async def update_telemetry(self, device_id: str, data: Dict[str, Any]):
         conn = self.active_connections.get(device_id)
@@ -210,7 +261,9 @@ class TrackerManager:
         if "uptime_s" in data:
             conn.uptime_s = data["uptime_s"]
 
-        await self.broadcast_dashboard({"type": "telemetry", "device": conn.to_dict()})
+        device_dict = conn.to_dict()
+        await self.broadcast_dashboard({"type": "telemetry", "device": device_dict})
+        await self.broadcast_dashboard({"type": "device_state", **device_dict})
 
     # Dashboard Management
     def add_dashboard_viewer(self, ws: WebSocket):

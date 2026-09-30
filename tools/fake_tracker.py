@@ -165,6 +165,17 @@ class SimulatedTracker:
                         await ws.send(buffered_frame)
                         await asyncio.sleep(0.005)
 
+                    # Send initial heartbeat immediately
+                    initial_hb = {
+                        "type": "heartbeat",
+                        "battery_pct": self.battery_pct,
+                        "battery_mv": self.battery_mv,
+                        "rssi": self.rssi,
+                        "uptime_s": int(time.time() - self.local_start_time),
+                        "dropped_samples": self.simulated_dropped,
+                    }
+                    await ws.send(json.dumps(initial_hb))
+
                     sender_task = asyncio.create_task(self._stream_sender(ws))
                     heartbeat_task = asyncio.create_task(self._heartbeat_sender(ws))
                     receiver_task = asyncio.create_task(self._stream_receiver(ws))

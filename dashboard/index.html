@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Eidon Tracker WiFi — Live Dashboard</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="navbar">
+        <div class="brand">
+          <div class="brand-title">EIDON TRACKER <span class="tag">WiFi</span></div>
+          <div class="brand-sub">Real-Time IMU Body Tracking Hub &bull; <code>eidon.local</code></div>
+        </div>
+        <div class="header-actions">
+          <div id="wsBadge" class="badge badge-disconnected">Connecting...</div>
+          <div class="session-bar">
+            <span id="sessionStatus" class="session-label">No Active Session</span>
+            <input type="text" id="sessionNameInput" placeholder="Session Name (e.g. Trial 1)" />
+            <button id="btnStartSession" class="btn btn-primary">Start Session</button>
+            <button id="btnEndSession" class="btn btn-danger" style="display: none;">End Session</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="dashboard-body">
+        <!-- Left: Device Panel (Required Roles Cards) -->
+        <section class="panel-devices">
+          <div class="panel-header">
+            <h2>Required Body Roles</h2>
+            <div id="roleSummary" class="roles-summary-badge">0 / 0 Online</div>
+          </div>
+          <p class="panel-desc">All required roles must be online to initiate recording.</p>
+          <div id="requiredRolesContainer" class="cards-grid">
+            <!-- Populated dynamically -->
+          </div>
+
+          <div id="extraDevicesSection" style="display: none; margin-top: 24px;">
+            <div class="panel-header">
+              <h3>Additional Devices</h3>
+            </div>
+            <div id="extraDevicesContainer" class="cards-grid"></div>
+          </div>
+        </section>
+
+        <!-- Right: 3D Visualizer & Live Pose Telemetry -->
+        <section class="panel-viewport">
+          <div class="viewport-header">
+            <div class="viewport-title">
+              <h2>3D Biomechanical View</h2>
+              <span class="subtle">Interactive 3D Orientation (Three.js)</span>
+            </div>
+            <div class="viewport-controls">
+              <button id="btnResetCamera" class="btn btn-sm btn-secondary">Reset Camera</button>
+            </div>
+          </div>
+
+          <div id="threeContainer" class="canvas-wrapper"></div>
+
+          <div class="telemetry-bar">
+            <div class="telemetry-item">
+              <span class="lbl">FPS</span>
+              <span id="valFps" class="val">60</span>
+            </div>
+            <div class="telemetry-item">
+              <span class="lbl">Sample Stream Rate</span>
+              <span id="valRate" class="val">~48 Hz</span>
+            </div>
+            <div class="telemetry-item">
+              <span class="lbl">Active Trackers</span>
+              <span id="valActiveTrackers" class="val">0</span>
+            </div>
+            <div class="telemetry-item">
+              <span class="lbl">Avg Loss</span>
+              <span id="valAvgLoss" class="val">0.00%</span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

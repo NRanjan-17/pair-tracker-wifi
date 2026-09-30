@@ -447,7 +447,93 @@ Health check endpoint.
 ---
 
 #### `GET /`
-Minimal web dashboard providing real-time HTML view of connected devices, assigned roles, battery levels, packet loss percentage, and active session controls.
+Serves the compiled Vite + TypeScript + Three.js web dashboard (`dashboard/dist`). Fallback to inline status page if static build is absent.
+
+---
+
+### 5.3 Live Dashboard WebSocket (`/v1/dashboard`)
+
+The `/v1/dashboard` endpoint provides a high-throughput, low-overhead WebSocket stream for real-time visualization, 3D pose playback, device telemetry, and session monitoring.
+
+#### A. Initial State Handshake
+Immediately upon establishing a WebSocket connection, the server pushes an `init` message containing the system configuration and current device inventory:
+```json
+{
+  "type": "init",
+  "required_roles": [
+    "chest",
+    "left_thigh",
+    "right_thigh",
+    "left_shin",
+    "right_shin",
+    "left_foot",
+    "right_foot"
+  ],
+  "devices": [
+    {
+      "device_id": "AA:BB:CC:11:22:01",
+      "role": "chest",
+      "role_id": 1,
+      "online": true,
+      "firmware_version": "1.0.0",
+      "battery_pct": 92,
+      "battery_mv": 3980,
+      "rssi": -55,
+      "uptime_s": 120,
+      "total_samples": 5760,
+      "dropped_samples": 2,
+      "loss_pct": 0.035,
+      "last_seen_ms": 1727670000000,
+      "clock_offset_ms": 15,
+      "clock_rtt_ms": 8
+    }
+  ],
+  "active_session": null
+}
+```
+
+#### B. Device State Changes (`device_state`)
+Broadcast in real-time whenever a device connects, disconnects, or sends updated battery, RSSI, or packet loss telemetry:
+```json
+{
+  "type": "device_state",
+  "device_id": "AA:BB:CC:11:22:01",
+  "role": "chest",
+  "role_id": 1,
+  "online": true,
+  "battery_pct": 92,
+  "battery_mv": 3980,
+  "rssi": -55,
+  "uptime_s": 120,
+  "total_samples": 5760,
+  "dropped_samples": 2,
+  "loss_pct": 0.035,
+  "last_seen_ms": 1727670000000
+}
+```
+When a device disconnects, `online` is set to `false`.
+
+#### C. Decoded Sensor Samples Throttled to 60 Hz (`sample`)
+Sensor frames received over the tracker ingest stream are decoded and streamed as JSON, strictly rate-limited to a maximum of **60 Hz per device** (minimum 16.67 ms interval between sample broadcasts for any single tracker):
+```json
+{
+  "type": "sample",
+  "device_id": "AA:BB:CC:11:22:01",
+  "role": "chest",
+  "seq": 1420,
+  "t_ms": 1727670000120,
+  "quat": [0.999, 0.012, -0.034, 0.005],
+  "accel": [0.02, 9.80, 0.05],
+  "gyro": [0.01, -0.02, 0.00],
+  "mag": [21.5, -14.8, 42.1],
+  "loss_pct": 0.035
+}
+```
+*Note*: `accel`, `gyro`, and `mag` arrays are `null` if the tracker transmitted a quaternion-only frame (`flags & 0x01 == 0`).
+
+#### D. Session State Changes
+- `session_started`: Broadcast when a recording session begins.
+- `session_ended`: Broadcast when a recording session is finalized.
 
 ---
 

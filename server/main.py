@@ -105,10 +105,23 @@ class DeviceCommandRequest(BaseModel):
     type: str
     duration_ms: Optional[int] = 3000
 
+DASHBOARD_DIST_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "dist"
+DASHBOARD_ASSETS_DIR = DASHBOARD_DIST_DIR / "assets"
+
 # REST Endpoints
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 async def get_dashboard():
+    index_path = DASHBOARD_DIST_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
     return HTMLResponse(content=DASHBOARD_HTML)
+
+@app.get("/assets/{asset_path:path}")
+async def get_dashboard_asset(asset_path: str):
+    asset_file = DASHBOARD_ASSETS_DIR / asset_path
+    if asset_file.exists() and asset_file.is_file():
+        return FileResponse(asset_file)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
 
 @app.get("/healthz")
 async def healthz():
@@ -169,6 +182,7 @@ async def announce_device(
 
     now_ms = int(time.time() * 1000)
     db.update_last_seen(payload.device_id, now_ms)
+    tracker_manager.cache_announced_telemetry(payload.device_id, payload.battery_pct, payload.battery_mv)
 
     return {
         "status": "ok",
@@ -327,6 +341,19 @@ async def device_stream_endpoint(
 async def dashboard_stream_endpoint(websocket: WebSocket):
     await websocket.accept()
     tracker_manager.add_dashboard_viewer(websocket)
+
+    # Send initial state handshake
+    try:
+        active_sess = db.get_session(tracker_manager.active_session_id) if tracker_manager.active_session_id else None
+        await websocket.send_json({
+            "type": "init",
+            "required_roles": roles_registry.required_roles,
+            "devices": tracker_manager.get_device_summary(),
+            "active_session": active_sess,
+        })
+    except Exception:
+        pass
+
     try:
         while True:
             # Keep-alive receive
