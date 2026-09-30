@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 PROTOCOL_VERSION = 1
+REQUIRED_PROTOCOL_VERSION = 1
 FLAG_RAW_PRESENT = 0x01
 FLAG_BACKFILL = 0x02
 

@@ -2,11 +2,12 @@ import asyncio
 from contextlib import asynccontextmanager
 import json
 from pathlib import Path
+import re
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
@@ -101,13 +102,17 @@ class DeviceAnnounceRequest(BaseModel):
     device_id: str
     role: str
     firmware_version: Optional[str] = "1.0.0"
+    protocol_version: Optional[int] = 1
     battery_pct: Optional[int] = None
     battery_mv: Optional[int] = None
+
+class DeviceOTARequest(BaseModel):
+    version: Optional[str] = "latest"
 
 class SessionCreateRequest(BaseModel):
     name: Optional[str] = "Tracking Session"
     description: Optional[str] = ""
-    calibration_offsets: Optional[Dict[str, Any]] = None
+    calibration_offsets: Optional[Dict[str, List[float]]] = None
 
 class DeviceCommandRequest(BaseModel):
     type: str
@@ -132,9 +137,53 @@ async def get_dashboard_asset(asset_path: str):
         return FileResponse(asset_file)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
 
+def get_all_firmware_manifests() -> List[Dict[str, Any]]:
+    if not FIRMWARE_BIN_DIR.exists():
+        return []
+    manifests = []
+    for p in FIRMWARE_BIN_DIR.iterdir():
+        if p.is_dir():
+            m_file = p / "manifest.json"
+            if m_file.exists():
+                try:
+                    with open(m_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        manifests.append(data)
+                except Exception:
+                    pass
+
+    def parse_v(v_str):
+        return [int(x) for x in re.findall(r"\d+", str(v_str))]
+
+    manifests.sort(key=lambda m: parse_v(m.get("version", "0")), reverse=True)
+    return manifests
+
+def get_latest_firmware_manifest() -> Optional[Dict[str, Any]]:
+    manifests = get_all_firmware_manifests()
+    return manifests[0] if manifests else None
+
+def get_firmware_manifest_by_version(version: str) -> Optional[Dict[str, Any]]:
+    if version == "latest":
+        return get_latest_firmware_manifest()
+    m_file = FIRMWARE_BIN_DIR / version / "manifest.json"
+    if m_file.exists():
+        try:
+            with open(m_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
 # Firmware & Web Serial Flashing Endpoints
-# TODO: OTA (Over-The-Air) firmware update is out of scope for current milestone.
-# Future milestone will implement POST /v1/firmware/ota to trigger self-update over WiFi.
+@app.get("/v1/firmware/latest")
+async def get_latest_firmware():
+    manifest = get_latest_firmware_manifest()
+    if not manifest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No firmware releases available",
+        )
+    return manifest
 
 @app.get("/v1/firmware/manifest")
 async def get_firmware_manifest():
@@ -161,6 +210,52 @@ async def get_firmware_manifest():
         "parts": available,
     }
 
+@app.get("/v1/firmware/{version}/firmware.bin")
+async def get_versioned_firmware_binary(
+    version: str,
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+):
+    # Device token authentication
+    req_token = token
+    if authorization and authorization.startswith("Bearer "):
+        req_token = authorization[7:].strip()
+
+    if not req_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Device token required to download firmware",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Validate against ADMIN_TOKEN, DB registered devices, or active connections
+    dev = db.get_device_by_token(req_token)
+    is_active_token = any(c.token == req_token for c in tracker_manager.active_connections.values())
+    if req_token != ADMIN_TOKEN and not dev and not is_active_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid device token",
+        )
+
+    resolved_version = version
+    if resolved_version == "latest":
+        latest = get_latest_firmware_manifest()
+        if not latest:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No firmware releases available",
+            )
+        resolved_version = latest["version"]
+
+    bin_path = FIRMWARE_BIN_DIR / resolved_version / "firmware.bin"
+    if not bin_path.exists() or not bin_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Firmware binary for version '{version}' not found",
+        )
+
+    return FileResponse(bin_path, media_type="application/octet-stream", filename=f"firmware_{resolved_version}.bin")
+
 @app.get("/v1/firmware/{filename}")
 async def get_firmware_binary(filename: str):
     safe_name = Path(filename).name
@@ -168,6 +263,108 @@ async def get_firmware_binary(filename: str):
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Firmware binary not found")
     return FileResponse(file_path, media_type="application/octet-stream", filename=safe_name)
+
+@app.post("/v1/devices/{device_id}/ota")
+async def trigger_device_ota(
+    device_id: str,
+    request: Request,
+    version: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),
+):
+    # Reject with 409 if a session is recording
+    if tracker_manager.active_session_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot trigger OTA update: recording session is active",
+        )
+
+    # Reject with 409 if device is offline
+    if device_id not in tracker_manager.active_connections:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Device {device_id} is offline",
+        )
+
+    conn = tracker_manager.active_connections[device_id]
+
+    # Reject with 409 if last battery is below 30%
+    if conn.battery_pct is not None and conn.battery_pct < 30:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Device battery is too low for OTA ({conn.battery_pct}% < 30%)",
+        )
+
+    # Extract target version from query, JSON body, or default to "latest"
+    target_version = version
+    if not target_version:
+        try:
+            body_bytes = await request.body()
+            if body_bytes:
+                body_str = body_bytes.decode("utf-8").strip()
+                try:
+                    parsed = json.loads(body_str)
+                    if isinstance(parsed, dict):
+                        target_version = parsed.get("version", "latest")
+                    elif isinstance(parsed, str):
+                        target_version = parsed
+                except Exception:
+                    target_version = body_str.strip('"')
+        except Exception:
+            pass
+
+    if not target_version:
+        target_version = "latest"
+
+    manifest = get_firmware_manifest_by_version(target_version)
+    if not manifest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Firmware version '{target_version}' not found",
+        )
+
+    # Create tracked OTA job
+    job = tracker_manager.create_ota_job(device_id=device_id, version=manifest["version"])
+
+    # Dispatch JSON "ota" command over WebSocket
+    ota_cmd = {
+        "type": "ota",
+        "version": manifest["version"],
+        "url": f"/v1/firmware/{manifest['version']}/firmware.bin",
+        "sha256": manifest["sha256"],
+        "size": manifest["size"],
+        "min_protocol": manifest.get("min_protocol", 1),
+    }
+
+    try:
+        await conn.ws.send_json(ota_cmd)
+    except Exception as e:
+        job.status = "failed"
+        job.error_message = f"Failed to send OTA command: {e}"
+        job.updated_at_ms = int(time.time() * 1000)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send OTA command: {e}",
+        )
+
+    await tracker_manager.broadcast_dashboard({"type": "ota_job_update", "job": job.to_dict()})
+    return {
+        "status": "ota_queued",
+        "job": job.to_dict(),
+    }
+
+@app.get("/v1/devices/{device_id}/ota")
+async def get_device_ota_status(device_id: str):
+    job = tracker_manager.get_ota_job_for_device(device_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No OTA job found for device {device_id}",
+        )
+    return job.to_dict()
+
+@app.get("/v1/ota/jobs")
+async def list_ota_jobs():
+    return tracker_manager.get_all_ota_jobs()
 
 @app.get("/healthz")
 async def healthz():
@@ -231,7 +428,17 @@ async def announce_device(
 
     now_ms = int(time.time() * 1000)
     db.update_last_seen(payload.device_id, now_ms)
-    tracker_manager.cache_announced_telemetry(payload.device_id, payload.battery_pct, payload.battery_mv)
+    tracker_manager.cache_announced_telemetry(
+        device_id=payload.device_id,
+        battery_pct=payload.battery_pct,
+        battery_mv=payload.battery_mv,
+        firmware_version=payload.firmware_version,
+        protocol_version=payload.protocol_version,
+    )
+    await tracker_manager.handle_device_announce_ota(
+        device_id=payload.device_id,
+        announced_version=payload.firmware_version or "unknown",
+    )
 
     return {
         "status": "ok",
@@ -520,6 +727,13 @@ async def device_stream_endpoint(
                     msg_type = text_data.get("type")
                     if msg_type == "heartbeat":
                         await tracker_manager.update_telemetry(device_id, text_data)
+                    elif msg_type == "ota_progress":
+                        await tracker_manager.update_ota_job_progress(
+                            device_id=device_id,
+                            status=text_data.get("status", "downloading"),
+                            progress_pct=text_data.get("progress_pct"),
+                            error=text_data.get("error"),
+                        )
                     elif msg_type == "time_sync_resp":
                         # Clock sync response: t0 (server tx), t1 (client rx), t2 (client tx)
                         t0 = text_data.get("t0", 0)
@@ -554,10 +768,13 @@ async def dashboard_stream_endpoint(websocket: WebSocket):
     # Send initial state handshake
     try:
         active_sess = db.get_session(tracker_manager.active_session_id) if tracker_manager.active_session_id else None
+        latest_fw = get_latest_firmware_manifest()
         await websocket.send_json({
             "type": "init",
             "required_roles": roles_registry.required_roles,
             "devices": tracker_manager.get_device_summary(),
+            "latest_firmware": latest_fw,
+            "ota_jobs": tracker_manager.get_all_ota_jobs(),
             "active_session": active_sess,
             "server_time_ms": int(time.time() * 1000),
         })

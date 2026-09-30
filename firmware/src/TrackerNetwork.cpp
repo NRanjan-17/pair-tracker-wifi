@@ -13,6 +13,7 @@ TrackerNetwork::TrackerNetwork()
       wifiConnected(false),
       wsConnected(false),
       recording(false),
+      otaInProgress(false),
       reconnectBackoffMs(1000),
       lastReconnectAttemptMs(0),
       lastHeartbeatMs(0),
@@ -43,6 +44,7 @@ void TrackerNetwork::begin() {
 bool TrackerNetwork::isWiFiConnected() const { return wifiConnected; }
 bool TrackerNetwork::isWSConnected() const { return wsConnected; }
 bool TrackerNetwork::isRecording() const { return recording; }
+bool TrackerNetwork::isOTAInProgress() const { return otaInProgress; }
 
 bool TrackerNetwork::connectWiFi() {
     String ssid = config.getSSID();
@@ -115,6 +117,7 @@ bool TrackerNetwork::announceDevice() {
     doc["device_id"] = deviceMac;
     doc["role"] = roleToString(config.getRole());
     doc["firmware_version"] = FIRMWARE_VERSION;
+    doc["protocol_version"] = PROTOCOL_VERSION;
     doc["battery_pct"] = battPct;
     doc["battery_mv"] = battMv;
 
@@ -162,6 +165,8 @@ void TrackerNetwork::handleWSEvent(WStype_t type, uint8_t* payload, size_t lengt
             wsConnected = true;
             Serial.println("WebSocket: Connected to server stream!");
             digitalWrite(LED_PIN, HIGH);
+
+            validateAppRollback();
 
             // Flush ring buffer (backfill)
             Batch2QuatFrame backfill;
@@ -235,10 +240,240 @@ void TrackerNetwork::handleTextMessage(const char* jsonStr, size_t length) {
         Serial.println("Command: REBOOT received, restarting...");
         delay(200);
         ESP.restart();
+    } else if (strcmp(type, "ota") == 0) {
+        String urlPath = doc["url"] | "";
+        String expectedSha256 = doc["sha256"] | "";
+        size_t expectedSize = doc["size"] | 0;
+        performOTA(urlPath, expectedSha256, expectedSize);
+    }
+}
+
+void TrackerNetwork::validateAppRollback() {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (!running) return;
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+            Serial.println("OTA: App running in pending verify state. Marking valid and cancelling rollback!");
+            esp_ota_mark_app_valid_cancel_rollback();
+        }
+    }
+}
+
+void TrackerNetwork::performOTA(const String& urlPath, const String& expectedSha256, size_t expectedSize) {
+    uint8_t battPct = 0;
+    uint16_t battMv = 0;
+    batteryMonitor.read(battPct, battMv);
+
+    if (battPct < 30) {
+        Serial.printf("OTA: Aborted - Battery too low (%u%% < 30%%)\n", battPct);
+        JsonDocument failDoc;
+        failDoc["type"] = "ota_progress";
+        failDoc["status"] = "failed";
+        failDoc["error"] = "Battery < 30%";
+        String out;
+        serializeJson(failDoc, out);
+        wsClient.sendTXT(out);
+        return;
+    }
+
+    otaInProgress = true;
+    Serial.printf("OTA: Starting update from %s (Expected SHA: %s, Size: %u bytes)\n",
+                  urlPath.c_str(), expectedSha256.c_str(), (unsigned int)expectedSize);
+
+    // Initial progress
+    {
+        JsonDocument pDoc;
+        pDoc["type"] = "ota_progress";
+        pDoc["status"] = "downloading";
+        pDoc["progress_pct"] = 0;
+        String out;
+        serializeJson(pDoc, out);
+        wsClient.sendTXT(out);
+        wsClient.loop();
+    }
+
+    HTTPClient http;
+    String fullUrl = (urlPath.startsWith("http://") || urlPath.startsWith("https://"))
+                   ? urlPath
+                   : ("http://" + resolvedHost + ":" + String(resolvedPort) + urlPath);
+
+    http.begin(fullUrl);
+    if (config.getDeviceToken().length() > 0) {
+        http.addHeader("Authorization", "Bearer " + config.getDeviceToken());
+    }
+
+    int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+        Serial.printf("OTA: HTTP GET failed with code %d\n", httpCode);
+        JsonDocument failDoc;
+        failDoc["type"] = "ota_progress";
+        failDoc["status"] = "failed";
+        failDoc["error"] = "HTTP download error " + String(httpCode);
+        String out;
+        serializeJson(failDoc, out);
+        wsClient.sendTXT(out);
+        http.end();
+        otaInProgress = false;
+        return;
+    }
+
+    int contentLength = http.getSize();
+    size_t otaSize = contentLength > 0 ? static_cast<size_t>(contentLength) : expectedSize;
+    if (otaSize == 0) {
+        otaSize = UPDATE_SIZE_UNKNOWN;
+    }
+
+    if (!Update.begin(otaSize, U_FLASH)) {
+        Serial.printf("OTA: Update.begin failed: %s\n", Update.errorString());
+        JsonDocument failDoc;
+        failDoc["type"] = "ota_progress";
+        failDoc["status"] = "failed";
+        failDoc["error"] = "Update.begin failed: " + String(Update.errorString());
+        String out;
+        serializeJson(failDoc, out);
+        wsClient.sendTXT(out);
+        http.end();
+        otaInProgress = false;
+        return;
+    }
+
+    // Initialize SHA-256 calculation
+    mbedtls_sha256_context sha_ctx;
+    mbedtls_sha256_init(&sha_ctx);
+    mbedtls_sha256_starts(&sha_ctx, 0); // 0 = SHA-256
+
+    WiFiClient* stream = http.getStreamPtr();
+    uint8_t buffer[1024];
+    size_t totalBytesRead = 0;
+    int lastReportedPct = 0;
+    uint32_t lastProgressMsgMs = millis();
+
+    while (http.connected() && (totalBytesRead < otaSize || otaSize == UPDATE_SIZE_UNKNOWN)) {
+        size_t availableBytes = stream->available();
+        if (availableBytes > 0) {
+            size_t toRead = availableBytes > sizeof(buffer) ? sizeof(buffer) : availableBytes;
+            int bytesRead = stream->readBytes(buffer, toRead);
+            if (bytesRead > 0) {
+                mbedtls_sha256_update(&sha_ctx, buffer, bytesRead);
+                size_t written = Update.write(buffer, bytesRead);
+                if (written != static_cast<size_t>(bytesRead)) {
+                    Serial.printf("OTA: Flash write error (wrote %u / %d)\n", (unsigned int)written, bytesRead);
+                    break;
+                }
+                totalBytesRead += bytesRead;
+
+                if (otaSize > 0 && otaSize != UPDATE_SIZE_UNKNOWN) {
+                    int pct = static_cast<int>((totalBytesRead * 100) / otaSize);
+                    if (pct >= lastReportedPct + 5 || (millis() - lastProgressMsgMs >= 500 && pct != lastReportedPct)) {
+                        lastReportedPct = pct;
+                        lastProgressMsgMs = millis();
+                        JsonDocument pDoc;
+                        pDoc["type"] = "ota_progress";
+                        pDoc["status"] = "downloading";
+                        pDoc["progress_pct"] = pct;
+                        String out;
+                        serializeJson(pDoc, out);
+                        wsClient.sendTXT(out);
+                        wsClient.loop();
+                    }
+                }
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+
+        if (contentLength > 0 && totalBytesRead >= static_cast<size_t>(contentLength)) {
+            break;
+        }
+    }
+
+    // Report verifying
+    {
+        JsonDocument pDoc;
+        pDoc["type"] = "ota_progress";
+        pDoc["status"] = "verifying";
+        pDoc["progress_pct"] = 100;
+        String out;
+        serializeJson(pDoc, out);
+        wsClient.sendTXT(out);
+        wsClient.loop();
+    }
+
+    // Finalize SHA-256
+    uint8_t calculatedHash[32];
+    mbedtls_sha256_finish(&sha_ctx, calculatedHash);
+    mbedtls_sha256_free(&sha_ctx);
+
+    char hexHash[65];
+    for (int i = 0; i < 32; i++) {
+        sprintf(hexHash + (i * 2), "%02x", calculatedHash[i]);
+    }
+    hexHash[64] = 0;
+
+    Serial.printf("OTA: Download complete (%u bytes). Calculated SHA: %s\n", (unsigned int)totalBytesRead, hexHash);
+
+    // Verify SHA-256 if expected hash was provided
+    if (expectedSha256.length() > 0 && !expectedSha256.equalsIgnoreCase(hexHash)) {
+        Serial.printf("OTA: SHA-256 mismatch! Expected: %s, Got: %s\n",
+                      expectedSha256.c_str(), hexHash);
+        Update.abort();
+        JsonDocument failDoc;
+        failDoc["type"] = "ota_progress";
+        failDoc["status"] = "failed";
+        failDoc["error"] = "SHA-256 mismatch";
+        String out;
+        serializeJson(failDoc, out);
+        wsClient.sendTXT(out);
+        http.end();
+        otaInProgress = false;
+        return;
+    }
+
+    if (!Update.end(true)) {
+        Serial.printf("OTA: Update.end error: %s\n", Update.errorString());
+        JsonDocument failDoc;
+        failDoc["type"] = "ota_progress";
+        failDoc["status"] = "failed";
+        failDoc["error"] = "Update.end failed: " + String(Update.errorString());
+        String out;
+        serializeJson(failDoc, out);
+        wsClient.sendTXT(out);
+        http.end();
+        otaInProgress = false;
+        return;
+    }
+
+    if (Update.isFinished()) {
+        Serial.println("OTA: Update successfully completed! Rebooting in 500 ms...");
+        JsonDocument rebootDoc;
+        rebootDoc["type"] = "ota_progress";
+        rebootDoc["status"] = "rebooting";
+        rebootDoc["progress_pct"] = 100;
+        String out;
+        serializeJson(rebootDoc, out);
+        wsClient.sendTXT(out);
+        wsClient.loop();
+
+        http.end();
+        delay(500);
+        ESP.restart();
+    } else {
+        Serial.println("OTA: Update failed - not finished");
+        JsonDocument failDoc;
+        failDoc["type"] = "ota_progress";
+        failDoc["status"] = "failed";
+        failDoc["error"] = "Update unfinished";
+        String out;
+        serializeJson(failDoc, out);
+        wsClient.sendTXT(out);
+        http.end();
+        otaInProgress = false;
     }
 }
 
 void TrackerNetwork::sendFrame(const Batch2QuatFrame& frame) {
+    if (otaInProgress) return;
     if (wsConnected) {
         wsClient.sendBIN(reinterpret_cast<const uint8_t*>(&frame), sizeof(frame));
     } else {

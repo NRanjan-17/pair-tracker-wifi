@@ -4,6 +4,9 @@
 #include <WiFi.h>
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
+#include <Update.h>
+#include <esp_ota_ops.h>
+#include <mbedtls/sha256.h>
 #include "Battery.h"
 #include "Config.h"
 #include "Protocol.h"
@@ -18,6 +21,7 @@ public:
     bool isWiFiConnected() const;
     bool isWSConnected() const;
     bool isRecording() const;
+    bool isOTAInProgress() const;
 
     bool connectWiFi();
     bool discoverServer();
@@ -29,11 +33,13 @@ public:
     uint32_t getSyncedServerTimeMs() const;
 
     void triggerIdentify(uint32_t durationMs = 3000);
+    void performOTA(const String& urlPath, const String& expectedSha256, size_t expectedSize);
 
 private:
     void handleWSEvent(WStype_t type, uint8_t* payload, size_t length);
     void handleTextMessage(const char* jsonStr, size_t length);
     void updateLED();
+    void validateAppRollback();
 
     WebSocketsClient wsClient;
     String resolvedHost;
@@ -43,6 +49,7 @@ private:
     bool wifiConnected;
     bool wsConnected;
     bool recording;
+    bool otaInProgress;
 
     uint32_t reconnectBackoffMs;
     uint32_t lastReconnectAttemptMs;

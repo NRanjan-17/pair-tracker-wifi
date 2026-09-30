@@ -8,6 +8,7 @@ Supports configurable packet loss, clock skew, and disconnect-reconnect ring buf
 import argparse
 import asyncio
 from collections import deque
+import hashlib
 import json
 import math
 import random
@@ -36,6 +37,11 @@ class SimulatedTracker:
         clock_skew_ms: int = 0,
         include_raw: bool = False,
         motion: str = "sinusoid",
+        firmware_version: str = "1.0.0",
+        protocol_version: int = 1,
+        simulate_ota_corrupt_hash: bool = False,
+        simulate_ota_download_fail: bool = False,
+        simulate_ota_rollback: bool = False,
     ):
         self.device_id = device_id
         self.role = role
@@ -46,6 +52,12 @@ class SimulatedTracker:
         self.clock_skew_ms = clock_skew_ms
         self.include_raw = include_raw
         self.motion = motion
+        self.firmware_version = firmware_version
+        self.protocol_version = protocol_version
+        self.simulate_ota_corrupt_hash = simulate_ota_corrupt_hash
+        self.simulate_ota_download_fail = simulate_ota_download_fail
+        self.simulate_ota_rollback = simulate_ota_rollback
+        self.ota_in_progress = False
 
         self.seq = 0
         self.running = False
@@ -80,7 +92,8 @@ class SimulatedTracker:
         payload = {
             "device_id": self.device_id,
             "role": self.role,
-            "firmware_version": "1.0.0",
+            "firmware_version": self.firmware_version,
+            "protocol_version": self.protocol_version,
             "battery_pct": self.battery_pct,
             "battery_mv": self.battery_mv,
         }
@@ -262,6 +275,10 @@ class SimulatedTracker:
         # 48 Hz sampling, batch 2 samples per frame -> frame rate = 24 Hz (~41.67 ms interval)
         interval = 2.0 / 48.0
         while self.running:
+            if self.ota_in_progress:
+                await asyncio.sleep(0.1)
+                continue
+
             start_loop = time.time()
             s1 = self.generate_sample()
             await asyncio.sleep(1.0 / 48.0)
@@ -311,6 +328,120 @@ class SimulatedTracker:
             except Exception:
                 break
 
+    async def _handle_ota_command(self, ws, data: dict):
+        if self.battery_pct < 30:
+            print(f"[{self.role}] OTA failed: battery too low ({self.battery_pct}% < 30%)")
+            await ws.send(json.dumps({
+                "type": "ota_progress",
+                "status": "failed",
+                "error": f"Battery too low ({self.battery_pct}% < 30%)",
+            }))
+            return
+
+        self.ota_in_progress = True
+
+        await ws.send(json.dumps({
+            "type": "ota_progress",
+            "status": "downloading",
+            "progress_pct": 0,
+        }))
+        await asyncio.sleep(0.05)
+
+        if self.simulate_ota_download_fail:
+            await ws.send(json.dumps({
+                "type": "ota_progress",
+                "status": "failed",
+                "error": "Simulated download network error",
+            }))
+            self.ota_in_progress = False
+            return
+
+        url_path = data.get("url", "")
+        if url_path.startswith("http://") or url_path.startswith("https://"):
+            full_url = url_path
+        else:
+            full_url = f"{self.server_url}{url_path}"
+
+        headers = {"Authorization": f"Bearer {self.token}"}
+        hasher = hashlib.sha256()
+
+        try:
+            async with httpx.AsyncClient() as client:
+                async with client.stream("GET", full_url, headers=headers, timeout=10.0) as resp:
+                    if resp.status_code != 200:
+                        await ws.send(json.dumps({
+                            "type": "ota_progress",
+                            "status": "failed",
+                            "error": f"HTTP {resp.status_code} download error",
+                        }))
+                        self.ota_in_progress = False
+                        return
+
+                    total_len = int(resp.headers.get("content-length", data.get("size", 1000)))
+                    downloaded = 0
+                    last_pct = 0
+
+                    async for chunk in resp.aiter_bytes():
+                        hasher.update(chunk)
+                        downloaded += len(chunk)
+                        pct = int((downloaded * 100) / total_len) if total_len > 0 else 50
+                        if pct >= last_pct + 25:
+                            last_pct = pct
+                            await ws.send(json.dumps({
+                                "type": "ota_progress",
+                                "status": "downloading",
+                                "progress_pct": pct,
+                            }))
+                            await asyncio.sleep(0.02)
+        except Exception as e:
+            await ws.send(json.dumps({
+                "type": "ota_progress",
+                "status": "failed",
+                "error": f"Download exception: {e}",
+            }))
+            self.ota_in_progress = False
+            return
+
+        # Verifying
+        await ws.send(json.dumps({
+            "type": "ota_progress",
+            "status": "verifying",
+            "progress_pct": 100,
+        }))
+        await asyncio.sleep(0.05)
+
+        calculated_sha = hasher.hexdigest()
+        expected_sha = data.get("sha256", "")
+
+        if self.simulate_ota_corrupt_hash:
+            calculated_sha = "0000000000000000000000000000000000000000000000000000000000000000"
+
+        if expected_sha and calculated_sha.lower() != expected_sha.lower():
+            print(f"[{self.role}] OTA SHA-256 mismatch! Got {calculated_sha}, expected {expected_sha}")
+            await ws.send(json.dumps({
+                "type": "ota_progress",
+                "status": "failed",
+                "error": "SHA-256 verification mismatch",
+            }))
+            self.ota_in_progress = False
+            return
+
+        # Rebooting
+        await ws.send(json.dumps({
+            "type": "ota_progress",
+            "status": "rebooting",
+            "progress_pct": 100,
+        }))
+        await asyncio.sleep(0.1)
+
+        if not self.simulate_ota_rollback:
+            self.firmware_version = data.get("version", self.firmware_version)
+            print(f"[{self.role}] OTA update succeeded! Reboots with firmware {self.firmware_version}")
+        else:
+            print(f"[{self.role}] OTA rollback simulated: stays on {self.firmware_version}")
+
+        self.ota_in_progress = False
+
     async def _stream_receiver(self, ws):
         while self.running:
             try:
@@ -347,6 +478,10 @@ class SimulatedTracker:
                         print(f"[{self.role}] *** CALIBRATING IMU ***")
                     elif msg_type == "reboot":
                         print(f"[{self.role}] *** REBOOT COMMAND RECEIVED ***")
+                    elif msg_type == "ota":
+                        print(f"[{self.role}] *** OTA COMMAND RECEIVED: {data} ***")
+                        await self._handle_ota_command(ws, data)
+                        break
             except Exception:
                 break
 

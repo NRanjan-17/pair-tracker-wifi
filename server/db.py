@@ -74,6 +74,17 @@ class Database:
                 return dict(row)
             return None
 
+    def get_device_by_token(self, token: str) -> Optional[Dict[str, Any]]:
+        if not token:
+            return None
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM devices WHERE token = ?", (token,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
     def get_all_devices(self) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
             cursor = conn.cursor()

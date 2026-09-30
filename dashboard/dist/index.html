@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Eidon Tracker WiFi — Live Dashboard & Recording</title>
-    <script type="module" crossorigin src="/assets/index-Ct1DqsxO.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CvWl4_1D.css">
+    <script type="module" crossorigin src="/assets/index--cLbLJYw.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BjJNyYwK.css">
   </head>
   <body>
     <div id="app">
@@ -55,9 +55,13 @@
           <div id="viewTrackers" class="tab-content active">
             <div class="panel-header">
               <h2>Required Body Roles</h2>
-              <div id="roleSummary" class="roles-summary-badge">0 / 0 Online</div>
+              <div class="panel-header-actions">
+                <span id="latestFwBadge" class="badge badge-secondary" title="Latest released firmware version" style="font-size: 0.72rem; padding: 4px 8px;">Latest: v1.0.0</span>
+                <button id="btnUpdateAll" class="btn btn-sm btn-primary" title="Update all outdated online devices sequentially">⬆️ Update all (one at a time)</button>
+                <div id="roleSummary" class="roles-summary-badge">0 / 0 Online</div>
+              </div>
             </div>
-            <p class="panel-desc">All required roles must be online to initiate recording.</p>
+            <p class="panel-desc">All required roles must be online to initiate recording. Keep firmware updated over WiFi.</p>
             <div id="requiredRolesContainer" class="cards-grid">
               <!-- Populated dynamically -->
             </div>

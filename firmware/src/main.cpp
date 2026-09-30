@@ -42,6 +42,12 @@ void sensorTask(void* pvParameters) {
         // Wait until next 48 Hz period
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
+        // Pause sensor polling and streaming during OTA updates
+        if (trackerNetwork.isOTAInProgress()) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         // Update role if changed
         currentBatch.header.role = static_cast<uint8_t>(config.getRole());
 

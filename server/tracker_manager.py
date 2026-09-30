@@ -1,12 +1,41 @@
 import asyncio
 import time
 from typing import Any, Dict, List, Optional, Set
+import uuid
 from fastapi import WebSocket
 from server.config import SESSIONS_DIR
 from server.db import db
 from server.parquet_writer import SessionParquetWriter
-from server.protocol import DataFrame, TrackerSample, compute_sequence_gap
+from server.protocol import (
+    DataFrame,
+    REQUIRED_PROTOCOL_VERSION,
+    TrackerSample,
+    compute_sequence_gap,
+)
 from server.roles import roles_registry
+
+class OTAJob:
+    def __init__(self, job_id: str, device_id: str, version: str):
+        self.job_id = job_id
+        self.device_id = device_id
+        self.version = version
+        self.status = "queued"  # queued, downloading, verifying, rebooting, success, failed
+        self.progress_pct: int = 0
+        self.error_message: Optional[str] = None
+        self.created_at_ms: int = int(time.time() * 1000)
+        self.updated_at_ms: int = int(time.time() * 1000)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "device_id": self.device_id,
+            "version": self.version,
+            "status": self.status,
+            "progress_pct": self.progress_pct,
+            "error_message": self.error_message,
+            "created_at_ms": self.created_at_ms,
+            "updated_at_ms": self.updated_at_ms,
+        }
 
 class TrackerConnection:
     def __init__(self, device_id: str, role: str, token: str, ws: WebSocket):
@@ -24,6 +53,8 @@ class TrackerConnection:
         self.rssi: Optional[int] = None
         self.uptime_s: Optional[int] = None
         self.firmware_version: str = "unknown"
+        self.protocol_version: int = 1
+        self.protocol_outdated: bool = False
         self.last_seen_ms: int = int(time.time() * 1000)
         self.clock_offset_ms: int = 0
         self.clock_rtt_ms: int = 0
@@ -42,6 +73,8 @@ class TrackerConnection:
             "role_id": self.role_id,
             "online": True,
             "firmware_version": self.firmware_version,
+            "protocol_version": self.protocol_version,
+            "protocol_outdated": self.protocol_outdated,
             "battery_pct": self.battery_pct,
             "battery_mv": self.battery_mv,
             "rssi": self.rssi,
@@ -74,17 +107,91 @@ class TrackerManager:
         self.parquet_writer: Optional[SessionParquetWriter] = None
         self.session_started_ms: Optional[int] = None
 
-    def cache_announced_telemetry(self, device_id: str, battery_pct: Optional[int], battery_mv: Optional[int]):
-        self.cached_announced_telemetry[device_id] = {
-            "battery_pct": battery_pct,
-            "battery_mv": battery_mv,
-        }
+        # OTA Jobs
+        self.ota_jobs: Dict[str, OTAJob] = {}
+        self.device_to_ota_job: Dict[str, str] = {}  # device_id -> active job_id
+
+    def cache_announced_telemetry(
+        self,
+        device_id: str,
+        battery_pct: Optional[int],
+        battery_mv: Optional[int],
+        firmware_version: Optional[str] = None,
+        protocol_version: Optional[int] = None,
+    ):
+        cached = self.cached_announced_telemetry.get(device_id, {})
+        if battery_pct is not None:
+            cached["battery_pct"] = battery_pct
+        if battery_mv is not None:
+            cached["battery_mv"] = battery_mv
+        if firmware_version is not None:
+            cached["firmware_version"] = firmware_version
+        if protocol_version is not None:
+            cached["protocol_version"] = protocol_version
+
+        self.cached_announced_telemetry[device_id] = cached
+
         if device_id in self.active_connections:
             conn = self.active_connections[device_id]
             if battery_pct is not None:
                 conn.battery_pct = battery_pct
             if battery_mv is not None:
                 conn.battery_mv = battery_mv
+            if firmware_version is not None:
+                conn.firmware_version = firmware_version
+            if protocol_version is not None:
+                conn.protocol_version = protocol_version
+                conn.protocol_outdated = (protocol_version < REQUIRED_PROTOCOL_VERSION)
+
+    def create_ota_job(self, device_id: str, version: str) -> OTAJob:
+        job_id = f"job_ota_{uuid.uuid4().hex[:12]}"
+        job = OTAJob(job_id=job_id, device_id=device_id, version=version)
+        self.ota_jobs[job_id] = job
+        self.device_to_ota_job[device_id] = job_id
+        return job
+
+    def get_ota_job_for_device(self, device_id: str) -> Optional[OTAJob]:
+        job_id = self.device_to_ota_job.get(device_id)
+        if job_id:
+            return self.ota_jobs.get(job_id)
+        return None
+
+    def get_all_ota_jobs(self) -> List[Dict[str, Any]]:
+        return [job.to_dict() for job in self.ota_jobs.values()]
+
+    async def update_ota_job_progress(
+        self,
+        device_id: str,
+        status: str,
+        progress_pct: Optional[int] = None,
+        error: Optional[str] = None,
+    ):
+        job = self.get_ota_job_for_device(device_id)
+        if not job:
+            return
+        job.status = status
+        if progress_pct is not None:
+            job.progress_pct = max(0, min(100, int(progress_pct)))
+        if error is not None:
+            job.error_message = str(error)
+        job.updated_at_ms = int(time.time() * 1000)
+        await self.broadcast_dashboard({"type": "ota_job_update", "job": job.to_dict()})
+
+    async def handle_device_announce_ota(self, device_id: str, announced_version: str):
+        job = self.get_ota_job_for_device(device_id)
+        if not job:
+            return
+        if job.status in ("queued", "downloading", "verifying", "rebooting"):
+            if announced_version == job.version:
+                job.status = "success"
+                job.progress_pct = 100
+                job.error_message = None
+                job.updated_at_ms = int(time.time() * 1000)
+            else:
+                job.status = "failed"
+                job.error_message = f"Firmware rollback or mismatch: announced {announced_version}, expected {job.version}"
+                job.updated_at_ms = int(time.time() * 1000)
+            await self.broadcast_dashboard({"type": "ota_job_update", "job": job.to_dict()})
 
     async def connect_tracker(self, device_id: str, role: str, token: str, ws: WebSocket) -> TrackerConnection:
         # If another device is already streaming with this role, disconnect previous or reject
@@ -103,6 +210,11 @@ class TrackerManager:
             cached = self.cached_announced_telemetry[device_id]
             conn.battery_pct = cached.get("battery_pct")
             conn.battery_mv = cached.get("battery_mv")
+            if cached.get("firmware_version"):
+                conn.firmware_version = cached["firmware_version"]
+            if cached.get("protocol_version") is not None:
+                conn.protocol_version = cached["protocol_version"]
+                conn.protocol_outdated = (conn.protocol_version < REQUIRED_PROTOCOL_VERSION)
 
         self.active_connections[device_id] = conn
         self.role_to_device[role] = device_id
@@ -126,6 +238,9 @@ class TrackerManager:
                 "role": conn.role,
                 "role_id": conn.role_id,
                 "online": False,
+                "firmware_version": conn.firmware_version,
+                "protocol_version": conn.protocol_version,
+                "protocol_outdated": conn.protocol_outdated,
                 "battery_pct": None,
                 "battery_mv": None,
                 "rssi": None,
@@ -150,14 +265,19 @@ class TrackerManager:
                 result.append(self.active_connections[dev_id].to_dict())
             else:
                 role_name = reg["role"]
+                cached = self.cached_announced_telemetry.get(dev_id, {})
+                cached_fw = cached.get("firmware_version", "unknown")
+                cached_proto = cached.get("protocol_version", 1)
                 result.append({
                     "device_id": dev_id,
                     "role": role_name,
                     "role_id": roles_registry.get_role_id(role_name) or 0,
                     "online": False,
-                    "firmware_version": "unknown",
-                    "battery_pct": None,
-                    "battery_mv": None,
+                    "firmware_version": cached_fw,
+                    "protocol_version": cached_proto,
+                    "protocol_outdated": (cached_proto < REQUIRED_PROTOCOL_VERSION),
+                    "battery_pct": cached.get("battery_pct"),
+                    "battery_mv": cached.get("battery_mv"),
                     "rssi": None,
                     "uptime_s": None,
                     "total_samples": 0,
@@ -172,6 +292,11 @@ class TrackerManager:
         for dev_id, conn in self.active_connections.items():
             if dev_id not in registered_ids:
                 result.append(conn.to_dict())
+
+        # Attach active OTA job info if present
+        for dev in result:
+            job = self.get_ota_job_for_device(dev["device_id"])
+            dev["ota_job"] = job.to_dict() if job else None
 
         return result
 

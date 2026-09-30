@@ -741,3 +741,86 @@ where $\mathbf{R}_{\text{child world}} = \mathbf{Q}_{\text{re-zero}} \otimes (\m
 - **Jitter Buffer**: Stores samples in a 50–100 ms buffer (default: 75 ms) to absorb network transmission jitter.
 - **Slerp Interpolation**: Evaluates poses at $t = t_{\text{now}} - \Delta_{\text{buffer}}$ via spherical linear interpolation (`slerp`) between adjacent samples.
 - **Latency Monitoring**: Measured end-to-end hardware-to-screen latency is computed and displayed live in the UI (target: $< 150\text{ ms}$).
+
+---
+
+## 9. Over-The-Air (OTA) Firmware Updates & Protocol Versioning
+
+### 9.1 Partition Layout & Dual-Slot Boot
+To ensure fail-safe updates, the ESP32-C6 firmware utilizes a two-slot OTA partition table (`partitions_two_ota.csv`):
+- `otadata` (`0x00e000`, 8 KB): Bootloader partition selection & rollback record.
+- `app0` (`0x010000`, 1984 KB): Primary firmware application slot.
+- `app1` (`0x200000`, 1984 KB): Secondary firmware application slot.
+
+Switching an existing hardware node from single-slot to two-slot OTA requires an initial flash over USB. Subsequent updates occur wirelessly.
+
+### 9.2 Device Announcement & Protocol Versioning
+Every device announce (`POST /v1/devices/announce`) transmits the node's protocol version:
+```json
+{
+  "device_id": "AA:BB:CC:11:22:33",
+  "role": "chest",
+  "firmware_version": "1.0.0",
+  "protocol_version": 1,
+  "battery_pct": 95,
+  "battery_mv": 4150
+}
+```
+The server checks `protocol_version` against `REQUIRED_PROTOCOL_VERSION` (currently `1`). If `protocol_version < REQUIRED_PROTOCOL_VERSION`, the server sets `protocol_outdated: true` in device state summaries and the dashboard alerts the user.
+
+### 9.3 Release Manifest & Authenticated Binary Distribution
+Firmware builds are versioned in `server/firmware_bin/<version>/` via `make release`:
+- `GET /v1/firmware/latest`: Returns latest release manifest (`version`, `sha256`, `size`, `min_protocol`).
+- `GET /v1/firmware/{version}/firmware.bin`: Binary download endpoint authenticated with device bearer token (`Authorization: Bearer <token>` or `?token=<token>`). Unauthenticated requests are rejected with HTTP 401; unauthorized tokens return HTTP 403.
+
+### 9.4 OTA Trigger Endpoint & Rejection Rules
+- `POST /v1/devices/{device_id}/ota` triggers an update for the specified node.
+- **Rejection Conditions (HTTP 409 Conflict):**
+  1. A recording session is currently active (`active_session_id is not None`).
+  2. The target device is offline.
+  3. The target device's last reported battery level is below **30%**.
+
+### 9.5 WebSocket Command & Progress Protocol
+1. **Server Command (`"ota"`)**: Dispatched over the device's stream WebSocket:
+   ```json
+   {
+     "type": "ota",
+     "version": "1.0.1",
+     "url": "/v1/firmware/1.0.1/firmware.bin",
+     "sha256": "3bf586472d4f29b6590788aa67ccf04c9fd99da229bde9c74eea07346b749099",
+     "size": 1314944,
+     "min_protocol": 1
+   }
+   ```
+2. **Device Progress Feedback (`"ota_progress"`)**: Streamed by the tracker:
+   ```json
+   {
+     "type": "ota_progress",
+     "status": "downloading",
+     "progress_pct": 45
+   }
+   ```
+   Valid statuses: `downloading`, `verifying`, `rebooting`, `failed`.
+3. **Dashboard Live Broadcast (`"ota_job_update"`)**:
+   ```json
+   {
+     "type": "ota_job_update",
+     "job": {
+       "job_id": "job_ota_abc123",
+       "device_id": "AA:BB:CC:11:22:33",
+       "version": "1.0.1",
+       "status": "downloading",
+       "progress_pct": 45,
+       "error_message": null,
+       "created_at_ms": 1727720000000,
+       "updated_at_ms": 1727720005000
+     }
+   }
+   ```
+
+### 9.6 Verification, Reboot, and Rollback
+- While downloading, the tracker computes the SHA-256 hash across incoming chunks using `mbedtls_sha256`.
+- If the computed hash fails to match the manifest hash, the tracker aborts the update, emits `{"status": "failed", "error": "SHA-256 mismatch"}`, and resumes sensor streaming without rebooting.
+- If verified, the tracker reboots into the updated slot.
+- Upon booting, the new slot is in `ESP_OTA_IMG_PENDING_VERIFY`. Only after successfully connecting to WiFi and establishing a WebSocket connection to the server does the tracker call `esp_ota_mark_app_valid_cancel_rollback()`. If a crash or boot failure occurs prior to verification, the hardware bootloader automatically reverts to the previous working slot.
+

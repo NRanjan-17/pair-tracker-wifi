@@ -1,6 +1,6 @@
 import './style.css';
 import { ThreeVisualizer } from './three_view';
-import { DeviceState, InitMessage, SampleMessage, SessionInfo } from './types';
+import { DeviceState, FirmwareManifest, InitMessage, OTAJob, SampleMessage, SessionInfo } from './types';
 import { PlaybackController, SessionDataResponse } from './playback';
 import { TrackerFlasher } from './flasher';
 
@@ -16,6 +16,12 @@ class DashboardApp {
   private devices: Map<string, DeviceState> = new Map(); // device_id -> DeviceState
   private roleToDevice: Map<string, DeviceState> = new Map(); // role -> DeviceState
   private activeSession: SessionInfo | null = null;
+
+  // OTA firmware management
+  public latestFirmware: FirmwareManifest | null = null;
+  private otaJobs: Map<string, OTAJob> = new Map();
+  private deviceToOtaJob: Map<string, OTAJob> = new Map();
+  private isUpdatingAll = false;
 
   // Recording timer
   private recordingTimerInterval: any = null;
@@ -37,6 +43,7 @@ class DashboardApp {
     this.connectWebSocket();
     this.startPeriodicUpdates();
     this.fetchSessions();
+    this.fetchLatestFirmware();
   }
 
   private initVisualizer() {
@@ -211,6 +218,11 @@ class DashboardApp {
     if (btnExit) {
       btnExit.addEventListener('click', () => this.exitPlayback());
     }
+
+    const btnUpdateAll = document.getElementById('btnUpdateAll');
+    if (btnUpdateAll) {
+      btnUpdateAll.addEventListener('click', () => this.updateAllDevices());
+    }
   }
 
   public calibratePose() {
@@ -269,6 +281,18 @@ class DashboardApp {
           this.visualizer.jitterBuffer.setServerTimeSync(init.server_time_ms);
         }
 
+        if (init.latest_firmware) {
+          this.latestFirmware = init.latest_firmware;
+          this.updateLatestFwBadge();
+        }
+
+        if (init.ota_jobs) {
+          for (const job of init.ota_jobs) {
+            this.otaJobs.set(job.job_id, job);
+            this.deviceToOtaJob.set(job.device_id, job);
+          }
+        }
+
         if (init.devices) {
           for (const d of init.devices) {
             this.devices.set(d.device_id, d);
@@ -279,6 +303,14 @@ class DashboardApp {
         }
         this.activeSession = init.active_session;
         this.updateSessionUI();
+        this.renderCards();
+        break;
+      }
+
+      case 'ota_job_update': {
+        const job = msg.job as OTAJob;
+        this.otaJobs.set(job.job_id, job);
+        this.deviceToOtaJob.set(job.device_id, job);
         this.renderCards();
         break;
       }
@@ -348,10 +380,18 @@ class DashboardApp {
       const statusClass = isOnline ? 'status-online' : 'status-missing';
       const statusText = isOnline ? 'ONLINE' : 'MISSING / OFFLINE';
 
-      const batt = isOnline && dev.battery_pct !== null ? `${dev.battery_pct}%` : '—';
-      const loss = isOnline ? `${dev.loss_pct.toFixed(2)}%` : '—';
-      const lastSeen = isOnline ? this.formatTimeAgo(dev.last_seen_ms) : 'Never';
-      const mac = isOnline ? dev.device_id : 'Not connected';
+      const batt = isOnline && dev && dev.battery_pct !== null ? `${dev.battery_pct}%` : '—';
+      const loss = isOnline && dev ? `${dev.loss_pct.toFixed(2)}%` : '—';
+      const lastSeen = isOnline && dev ? this.formatTimeAgo(dev.last_seen_ms) : 'Never';
+      const mac = isOnline && dev ? dev.device_id : 'Not connected';
+
+      const fwVer = dev && dev.firmware_version ? dev.firmware_version : 'unknown';
+      const latestVer = this.latestFirmware ? this.latestFirmware.version : '1.0.0';
+      const isOutdated = isOnline && fwVer !== 'unknown' && fwVer !== latestVer;
+      const isProtoOutdated = dev && dev.protocol_outdated;
+      const job = dev ? this.deviceToOtaJob.get(dev.device_id) : null;
+      const hasActiveOta = job && ['queued', 'downloading', 'verifying', 'rebooting'].includes(job.status);
+      const isBatteryLow = isOnline && dev && dev.battery_pct !== null && dev.battery_pct < 30;
 
       card.innerHTML = `
         <div class="card-top">
@@ -368,20 +408,43 @@ class DashboardApp {
           </div>
           <div class="metric-col">
             <span class="metric-lbl">Loss</span>
-            <span class="metric-val" id="loss-${role}" style="color: ${isOnline && dev.loss_pct > 1.0 ? 'var(--danger)' : 'inherit'}">${loss}</span>
+            <span class="metric-val" id="loss-${role}" style="color: ${isOnline && dev && dev.loss_pct > 1.0 ? 'var(--danger)' : 'inherit'}">${loss}</span>
           </div>
           <div class="metric-col">
             <span class="metric-lbl">Last Seen</span>
             <span class="metric-val" id="seen-${role}">${lastSeen}</span>
           </div>
         </div>
+        <div class="firmware-meta-row">
+          <span style="color: var(--text-muted);">FW: <strong>v${fwVer}</strong></span>
+          <div class="fw-val-group">
+            ${isOutdated ? `<span class="badge-update-avail" title="Update available to v${latestVer}">⬆️ v${latestVer} avail</span>` : (isOnline && fwVer !== 'unknown' ? `<span class="badge-up-to-date">✓ Up to date</span>` : '')}
+            ${isProtoOutdated ? `<span class="badge-proto-outdated" title="Protocol older than required">⚠️ Proto v${dev?.protocol_version || 1} outdated</span>` : ''}
+          </div>
+        </div>
+        ${
+          job
+            ? `<div class="ota-job-panel ota-status-${job.status}">
+                <div class="ota-status-header">
+                  <span>OTA: ${job.status.toUpperCase()} ${job.status === 'downloading' ? `(${job.progress_pct}%)` : ''}</span>
+                  ${job.error_message ? `<span class="ota-error-text" title="${job.error_message}">${job.error_message}</span>` : ''}
+                </div>
+                ${job.status === 'downloading' ? `<div class="ota-progress-bar"><div class="ota-progress-fill" style="width: ${job.progress_pct}%"></div></div>` : ''}
+              </div>`
+            : ''
+        }
         <div class="card-footer">
           <span><code>${mac}</code></span>
           ${
-            isOnline
+            isOnline && dev
               ? `<div class="card-actions">
                   <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'identify')">Blink</button>
                   <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'reboot')">Reboot</button>
+                  ${
+                    hasActiveOta
+                      ? `<button class="btn btn-secondary btn-sm" disabled>Updating...</button>`
+                      : `<button class="btn ${isOutdated ? 'btn-primary' : 'btn-secondary'} btn-sm" ${isBatteryLow ? 'disabled title="Battery < 30%"' : ''} onclick="window.dashboardApp.triggerOTA('${dev.device_id}')">Update</button>`
+                  }
                 </div>`
               : `<span style="color: var(--danger); font-size: 0.72rem; font-weight: 600;">Required for session</span>`
           }
@@ -406,6 +469,119 @@ class DashboardApp {
     const activeEl = document.getElementById('valActiveTrackers');
     if (activeEl && !this.visualizer.isPlaybackMode) {
       activeEl.innerText = `${this.roleToDevice.size}`;
+    }
+  }
+
+  public async fetchLatestFirmware() {
+    try {
+      const res = await fetch('/v1/firmware/latest');
+      if (res.ok) {
+        this.latestFirmware = await res.json();
+        this.updateLatestFwBadge();
+        this.renderCards();
+      }
+    } catch (e) {
+      console.warn('Failed to fetch latest firmware manifest', e);
+    }
+  }
+
+  private updateLatestFwBadge() {
+    const badge = document.getElementById('latestFwBadge');
+    if (badge && this.latestFirmware) {
+      badge.innerText = `Latest: v${this.latestFirmware.version}`;
+    }
+  }
+
+  public async triggerOTA(deviceId: string, version: string = 'latest'): Promise<boolean> {
+    try {
+      const res = await fetch(`/v1/devices/${deviceId}/ota?version=${encodeURIComponent(version)}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${ADMIN_TOKEN}`,
+        },
+        body: JSON.stringify({ version }),
+      });
+      if (res.status === 409) {
+        const err = await res.json().catch(() => ({}));
+        alert(`OTA Rejected: ${err.detail || 'Device busy, offline, or battery < 30%'}`);
+        return false;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        alert(`OTA Failed: ${err.detail}`);
+        return false;
+      }
+      const data = await res.json();
+      if (data.job) {
+        this.otaJobs.set(data.job.job_id, data.job);
+        this.deviceToOtaJob.set(deviceId, data.job);
+        this.renderCards();
+      }
+      return true;
+    } catch (e: any) {
+      alert(`Error initiating OTA: ${e.message}`);
+      return false;
+    }
+  }
+
+  public async updateAllDevices() {
+    if (this.isUpdatingAll) return;
+    const btn = document.getElementById('btnUpdateAll') as HTMLButtonElement;
+
+    // Gather candidate devices: online devices
+    const onlineDevices: DeviceState[] = [];
+    for (const d of this.devices.values()) {
+      if (d.online) {
+        onlineDevices.push(d);
+      }
+    }
+
+    if (onlineDevices.length === 0) {
+      alert('No online devices available to update.');
+      return;
+    }
+
+    const outdated = onlineDevices.filter((d) => d.firmware_version !== this.latestFirmware?.version);
+    const targets = outdated.length > 0 ? outdated : onlineDevices;
+
+    if (!confirm(`Update ${targets.length} device(s) one at a time to latest firmware?`)) {
+      return;
+    }
+
+    this.isUpdatingAll = true;
+    if (btn) btn.disabled = true;
+
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const dev = targets[i];
+        if (btn) btn.innerText = `Updating ${i + 1}/${targets.length} (${dev.role})...`;
+
+        const started = await this.triggerOTA(dev.device_id);
+        if (!started) {
+          console.warn(`Could not start OTA on device ${dev.device_id}, moving to next.`);
+          continue;
+        }
+
+        // Wait until this device finishes OTA (success or failed) or timeout (60s)
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(() => resolve(), 60000);
+          const checkInterval = setInterval(() => {
+            const job = this.deviceToOtaJob.get(dev.device_id);
+            if (job && (job.status === 'success' || job.status === 'failed')) {
+              clearInterval(checkInterval);
+              clearTimeout(timeout);
+              resolve();
+            }
+          }, 500);
+        });
+      }
+    } finally {
+      this.isUpdatingAll = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = '⬆️ Update all (one at a time)';
+      }
     }
   }
 

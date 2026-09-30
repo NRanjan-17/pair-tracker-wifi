@@ -1,4 +1,4 @@
-.PHONY: help install test run-server run-fake clean pio-build firmware-bin build-dashboard verify-dashboard
+.PHONY: help install test run-server run-fake clean pio-build firmware-bin release build-dashboard verify-dashboard
 
 help:
 	@echo "Available commands:"
@@ -10,6 +10,7 @@ help:
 	@echo "  make run-fake        Run fake tracker simulation"
 	@echo "  make pio-build       Build PlatformIO firmware"
 	@echo "  make firmware-bin    Build firmware and copy binaries into server/firmware_bin"
+	@echo "  make release         Build firmware and create versioned release with manifest.json"
 	@echo "  make clean           Remove temporary files"
 
 install:
@@ -43,6 +44,9 @@ firmware-bin: pio-build
 		cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin server/firmware_bin/ ; \
 	fi
 	@echo "Firmware binaries copied to server/firmware_bin/"
+
+release: pio-build
+	. .venv/bin/activate && python3 tools/release_firmware.py $(VERSION)
 
 clean:
 	rm -rf .pytest_cache __pycache__ server/__pycache__ tools/__pycache__ tests/__pycache__
