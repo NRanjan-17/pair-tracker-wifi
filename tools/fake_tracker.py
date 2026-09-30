@@ -86,7 +86,7 @@ class SimulatedTracker:
         return int((time.time() - self.local_start_time) * 1000)
 
     def current_synced_time_ms(self) -> int:
-        return self.local_millis() + self.server_time_offset_ms
+        return (self.local_millis() + int(self.server_time_offset_ms)) & 0xFFFFFFFF
 
     def stop(self):
         self.running = False

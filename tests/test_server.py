@@ -111,6 +111,21 @@ def test_frame_encode_decode_with_raw_imu():
     assert pytest.approx(decoded.samples[0].accel_y, 0.001) == 9.81
     assert pytest.approx(decoded.samples[1].mag_z, 0.001) == 40.1
 
+def test_frame_encode_overflow_protection_uint32():
+    # Large timestamps (e.g. Unix epoch ms ~ 1.77e12) and large sequence numbers (> 65535)
+    s1 = TrackerSample(
+        seq=70000,
+        t_ms=1770000000000,
+        quat_w=1.0,
+        quat_x=0.0,
+        quat_y=0.0,
+        quat_z=0.0,
+    )
+    raw_bytes = encode_frame(role=1, samples=[s1])
+    decoded = decode_frame(raw_bytes)
+    assert decoded.samples[0].seq == 70000 & 0xFFFF
+    assert decoded.samples[0].t_ms == 1770000000000 & 0xFFFFFFFF
+
 def test_frame_decode_errors():
     with pytest.raises(ValueError, match="too short for header"):
         decode_frame(b"\x01\x01")

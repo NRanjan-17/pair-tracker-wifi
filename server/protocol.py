@@ -147,7 +147,17 @@ def encode_frame(
     buf = bytearray(struct.pack(HEADER_FORMAT, version, role, flags, count))
 
     for s in samples:
-        buf.extend(struct.pack(QUAT_SAMPLE_FORMAT, s.seq, s.t_ms, s.quat_w, s.quat_x, s.quat_y, s.quat_z))
+        buf.extend(
+            struct.pack(
+                QUAT_SAMPLE_FORMAT,
+                s.seq & 0xFFFF,
+                int(s.t_ms) & 0xFFFFFFFF,
+                s.quat_w,
+                s.quat_x,
+                s.quat_y,
+                s.quat_z,
+            )
+        )
         if include_raw:
             buf.extend(
                 struct.pack(
