@@ -1,0 +1,33 @@
+# Reference repo
+/reference
+
+# PlatformIO
+.pio
+.pioenvs
+.piolibdeps
+firmware/.pio
+firmware/.pioenvs
+firmware/.piolibdeps
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.pytest_cache/
+
+# Data & Database
+*.sqlite3
+*.db
+*.parquet
+sessions_data/
+data/
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/

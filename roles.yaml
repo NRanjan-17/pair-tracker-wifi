@@ -1,0 +1,71 @@
+# Eidon Tracker WiFi - Body Roles Definition
+# Wire format: role is encoded as a uint8 (0-255).
+# 0 is reserved for UNASSIGNED.
+
+roles:
+  - id: 0
+    name: "unassigned"
+    description: "Unassigned or unconfigured tracker"
+  - id: 1
+    name: "chest"
+    description: "Chest / Torso"
+  - id: 2
+    name: "left_shoulder"
+    description: "Left Shoulder"
+  - id: 3
+    name: "right_shoulder"
+    description: "Right Shoulder"
+  - id: 4
+    name: "left_upper_arm"
+    description: "Left Upper Arm"
+  - id: 5
+    name: "right_upper_arm"
+    description: "Right Upper Arm"
+  - id: 6
+    name: "left_elbow"
+    description: "Left Elbow"
+  - id: 7
+    name: "right_elbow"
+    description: "Right Elbow"
+  - id: 8
+    name: "left_forearm"
+    description: "Left Forearm"
+  - id: 9
+    name: "right_forearm"
+    description: "Right Forearm"
+  - id: 10
+    name: "left_hand"
+    description: "Left Hand"
+  - id: 11
+    name: "right_hand"
+    description: "Right Hand"
+  - id: 12
+    name: "left_thigh"
+    description: "Left Thigh"
+  - id: 13
+    name: "right_thigh"
+    description: "Right Thigh"
+  - id: 14
+    name: "left_shin"
+    description: "Left Shin"
+  - id: 15
+    name: "right_shin"
+    description: "Right Shin"
+  - id: 16
+    name: "left_foot"
+    description: "Left Foot"
+  - id: 17
+    name: "right_foot"
+    description: "Right Foot"
+
+# Required roles for session recording.
+# POST /v1/sessions returns 409 Conflict unless all required roles are currently online.
+# Can be configured to a subset (e.g., lower body or upper body) or full set.
+required_roles:
+  - "chest"
+  - "left_thigh"
+  - "right_thigh"
+  - "left_shin"
+  - "right_shin"
+  - "left_foot"
+  - "right_foot"

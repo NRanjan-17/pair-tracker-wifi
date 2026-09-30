@@ -1,0 +1,512 @@
+# Eidon Tracker WiFi — Protocol Specification
+
+Version: `1.0.0`  
+Status: **Proposed**
+
+---
+
+## 1. Overview & Architecture
+
+The **eidon-tracker-wifi** system is an end-to-end IMU body tracking infrastructure composed of:
+1. **ESP32-C6 WiFi Trackers**: Autonomous wearable sensor nodes running FreeRTOS and Arduino framework with Seeed Studio XIAO ESP32-C6 and BNO085 IMU.
+2. **Local Eidon Server**: High-throughput FastAPI / Uvicorn server providing mDNS discovery (`eidon.local`), device registration/announcement, low-latency binary WebSocket ingestion, real-time live streaming fan-out, sequence-gap loss accounting, and Parquet dataset export.
+
+```
++-----------------------------------------------------------+
+|                     ESP32-C6 Tracker                      |
+|                                                           |
+|  [BNO085 IMU]                                             |
+|        | 48 Hz (Game Rotation Vector + Accel/Gyro/Mag)   |
+|        v                                                  |
+|  [Sensor Task] ---> [FreeRTOS Queue / Ring Buffer]        |
+|                            |                              |
+|                            v                              |
+|  [Network Task] <------------------------------------+    |
++--------|---------------------------------------------|----+
+         |                                             |
+         | 1. WiFi Station 2.4 GHz                     |
+         | 2. mDNS discovery (eidon.local)             |
+         | 3. POST /v1/devices/announce                |
+         | 4. WS /v1/devices/{id}/stream (Bearer token)|
+         v                                             |
++------------------------------------------------------|----+
+|                       Local Server                   |    |
+|                                                      |    |
+|  FastAPI / Uvicorn (eidon.local:8000)                |    |
+|  - REST API & Health Check                           |    |
+|  - WebSocket Ingest (/v1/devices/{id}/stream)        |    |
+|  - Clock Sync (NTP-style RTT ping-pong) ------------>+    |
+|  - Seq-gap loss detection (uint16 wrap handling)          |
+|  - SQLite Device Registry & Session Metadata              |
+|  - Real-time Dashboards (/v1/dashboard & /)               |
+|  - Per-Session Batched Parquet Writer (PyArrow)           |
++-----------------------------------------------------------+
+```
+
+---
+
+## 2. Roles Specification
+
+Each tracker is assigned **one fixed body role** during provisioning, persisted in non-volatile storage (NVS). Auto-detection is not used.
+
+Roles are represented as a `uint8` on the wire:
+
+| ID (`uint8`) | Role Identifier (`roles.yaml`) | Description |
+|:---:|:---|:---|
+| `0` | `unassigned` | Unconfigured / default tracker |
+| `1` | `chest` | Chest / Torso |
+| `2` | `left_shoulder` | Left Shoulder |
+| `3` | `right_shoulder` | Right Shoulder |
+| `4` | `left_upper_arm` | Left Upper Arm |
+| `5` | `right_upper_arm` | Right Upper Arm |
+| `6` | `left_elbow` | Left Elbow |
+| `7` | `right_elbow` | Right Elbow |
+| `8` | `left_forearm` | Left Forearm |
+| `9` | `right_forearm` | Right Forearm |
+| `10` | `left_hand` | Left Hand |
+| `11` | `right_hand` | Right Hand |
+| `12` | `left_thigh` | Left Thigh |
+| `13` | `right_thigh` | Right Thigh |
+| `14` | `left_shin` | Left Shin |
+| `15` | `right_shin` | Right Shin |
+| `16` | `left_foot` | Left Foot |
+| `17` | `right_foot` | Right Foot |
+
+### Session Role Validation Rule
+A recording session cannot start (`POST /v1/sessions` returns `409 Conflict`) unless all roles listed under `required_roles` in `roles.yaml` are online and connected with an active stream.
+
+---
+
+## 3. Wire Format: Binary Sensor Frames
+
+Trackers stream sensor data over WebSocket (`/v1/devices/{id}/stream`) using binary frames formatted in **little-endian**.
+
+Each frame batches **2 samples** per message (at 48 Hz sensor sampling rate, this yields 24 frames/sec per tracker, optimizing IP packet overhead while keeping network latency below 21 ms).
+
+### 3.1 Frame Header Layout (4 bytes)
+
+| Byte Offset | Field | Type | Description |
+|:---:|:---|:---|:---|
+| `0` | `version` | `uint8` | Protocol version = `1` |
+| `1` | `role` | `uint8` | Tracker role ID (`1`..`17`) |
+| `2` | `flags` | `uint8` | Bit flags (see below) |
+| `3` | `count` | `uint8` | Number of samples in payload (normally `2`) |
+
+#### Flags Bitfield:
+- **Bit 0 (`0x01`)**: `raw_present` — `1` if raw IMU (accel, gyro, mag) is present; `0` if quaternion-only.
+- **Bit 1 (`0x02`)**: `backfill` — `1` if frame was read from disconnect ring buffer; `0` for live frames.
+- **Bits 2–7**: Reserved, must be `0`.
+
+---
+
+### 3.2 Sample Layout
+
+Each sample in the payload immediately follows the header.
+
+#### A. Quaternion-Only Sample (`flags & 0x01 == 0`): 22 bytes per sample
+
+| Offset | Field | Type | Unit / Range | Description |
+|:---:|:---|:---|:---|:---|
+| `0..1` | `seq` | `uint16` (LE) | `0..65535` | Monotonically incrementing sample sequence number |
+| `2..5` | `t_ms` | `uint32` (LE) | Milliseconds | Server-synchronized sample timestamp |
+| `6..9` | `quat_w` | `float32` (LE) | `[-1.0, 1.0]` | Quaternion W (scalar) |
+| `10..13`| `quat_x` | `float32` (LE) | `[-1.0, 1.0]` | Quaternion X |
+| `14..17`| `quat_y` | `float32` (LE) | `[-1.0, 1.0]` | Quaternion Y |
+| `18..21`| `quat_z` | `float32` (LE) | `[-1.0, 1.0]` | Quaternion Z |
+
+> **Total Frame Size (2 samples)**: `4 + 2 * 22 = 48 bytes`.
+
+#### B. Full Sample with Raw IMU (`flags & 0x01 == 1`): 58 bytes per sample
+
+| Offset | Field | Type | Unit | Description |
+|:---:|:---|:---|:---|:---|
+| `0..21` | *Same as Quaternion Sample* | — | — | `seq`, `t_ms`, `quat_w,x,y,z` (22 bytes) |
+| `22..25`| `accel_x` | `float32` (LE) | $\text{m/s}^2$ | Linear acceleration X |
+| `26..29`| `accel_y` | `float32` (LE) | $\text{m/s}^2$ | Linear acceleration Y |
+| `30..33`| `accel_z` | `float32` (LE) | $\text{m/s}^2$ | Linear acceleration Z |
+| `34..37`| `gyro_x` | `float32` (LE) | $\text{rad/s}$ | Angular velocity X |
+| `38..41`| `gyro_y` | `float32` (LE) | $\text{rad/s}$ | Angular velocity Y |
+| `42..45`| `gyro_z` | `float32` (LE) | $\text{rad/s}$ | Angular velocity Z |
+| `46..49`| `mag_x` | `float32` (LE) | $\mu\text{T}$ | Magnetic field X |
+| `50..53`| `mag_y` | `float32` (LE) | $\mu\text{T}$ | Magnetic field Y |
+| `54..57`| `mag_z` | `float32` (LE) | $\mu\text{T}$ | Magnetic field Z |
+
+> **Total Frame Size (2 samples)**: `4 + 2 * 58 = 120 bytes`.
+
+---
+
+### 3.3 Sequence Gap & Packet Loss Detection
+
+`seq` is a 16-bit rolling counter (`0` to `65535`). To handle counter wraparound:
+
+$$\Delta = (\text{seq} - \text{last\_seq}) \ \& \ \text{0xFFFF}$$
+
+- If $\Delta == 1$: Expected in-order sample. No loss.
+- If $1 < \Delta < 32768$: Sample drop detected.
+  $$\text{dropped\_samples} = \Delta - 1$$
+- If $\Delta == 0$: Duplicate sample (discard or ignore for loss calculation).
+- If $\Delta \ge 32768$: Out-of-order or delayed backfill sample. Handled according to timestamp without incrementing packet loss counters.
+
+---
+
+### 3.4 Mount Correction
+By default, trackers apply a mounting correction corresponding to a 180° rotation around the Z-axis:
+$$(w, -x, -y, z)$$
+This is enabled via compile-time flag `#define EIDON_MOUNT_CORRECTION 1`.
+
+---
+
+## 4. Text (JSON) Control Messages over WebSocket
+
+Both binary sensor frames and text JSON frames share the `/v1/devices/{id}/stream` WebSocket connection.
+
+### 4.1 Device $\to$ Server Messages
+
+#### A. Periodic Heartbeat (Every 5 seconds)
+```json
+{
+  "type": "heartbeat",
+  "battery_pct": 88,
+  "battery_mv": 3950,
+  "rssi": -64,
+  "uptime_s": 342,
+  "dropped_samples": 0
+}
+```
+
+#### B. Clock Sync Response
+```json
+{
+  "type": "time_sync_resp",
+  "t0": 1727670000100,
+  "t1": 45120,
+  "t2": 45121
+}
+```
+
+---
+
+### 4.2 Server $\to$ Device Commands
+
+#### A. Clock Sync Request
+The server triggers periodic clock synchronization (e.g. every 15 seconds):
+```json
+{
+  "type": "time_sync",
+  "t0": 1727670000100
+}
+```
+
+**Clock Offset Estimation Algorithm:**
+1. Server records server epoch time $T_0$ (ms) and sends `time_sync`.
+2. Device records local receive timestamp $T_1 = \text{millis()}$.
+3. Device records local transmit timestamp $T_2 = \text{millis()}$ and echoes $T_0, T_1, T_2$ in `time_sync_resp`.
+4. Server receives response at $T_3 = \text{epoch\_ms()}$.
+5. Round-trip network time: $\text{RTT} = (T_3 - T_0) - (T_2 - T_1)$.
+6. Clock offset to map device local time to server time:
+   $$\text{offset\_ms} = \frac{(T_0 - T_1) + (T_3 - T_2)}{2}$$
+7. Server sends `time_sync_ack`:
+   ```json
+   {
+     "type": "time_sync_ack",
+     "offset_ms": 1727669954980,
+     "rtt_ms": 12
+   }
+   ```
+8. The tracker sets `server_time_offset_ms = offset_ms`. Any sensor reading at local time $t_{\text{local}}$ is stamped as:
+   $$t_{\text{ms}} = t_{\text{local}} + \text{offset\_ms}$$
+
+#### B. Control Commands
+- **Start Recording Session**:
+  ```json
+  {
+    "type": "start",
+    "session_id": "sess_f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+    "recording_id": "rec_001"
+  }
+  ```
+- **Stop Recording Session**:
+  ```json
+  {
+    "type": "stop"
+  }
+  ```
+- **Identify Device (Blink LED on GPIO 15)**:
+  ```json
+  {
+    "type": "identify",
+    "duration_ms": 3000
+  }
+  ```
+- **Calibrate IMU**:
+  ```json
+  {
+    "type": "calibrate"
+  }
+  ```
+- **Reboot Tracker**:
+  ```json
+  {
+    "type": "reboot"
+  }
+  ```
+
+---
+
+## 5. REST API Specification
+
+### Authentication
+- **Admin Endpoints**: Require HTTP Header `Authorization: Bearer <ADMIN_TOKEN>`. The admin token is read from server environment variable `EIDON_ADMIN_TOKEN` (default: `eidon_admin_secret`).
+- **Device Endpoints**: Require HTTP Header `Authorization: Bearer <DEVICE_TOKEN>` or query parameter `?token=<DEVICE_TOKEN>`.
+
+---
+
+### 5.1 Device Endpoints
+
+#### `POST /v1/devices/register`
+Admin endpoint to register or pre-authorize a tracker with a designated role and security token.
+
+- **Auth**: Admin Bearer Token
+- **Request Body**:
+  ```json
+  {
+    "device_id": "CC:BA:79:3A:45:90",
+    "role": "chest",
+    "token": "tok_tracker_chest_01",
+    "notes": "Tracker #1 mounted on torso"
+  }
+  ```
+- **Response** (`201 Created` or `200 OK`):
+  ```json
+  {
+    "status": "registered",
+    "device_id": "CC:BA:79:3A:45:90",
+    "role": "chest",
+    "role_id": 1
+  }
+  ```
+
+---
+
+#### `POST /v1/devices/announce`
+Called by the tracker immediately after WiFi connection.
+
+- **Auth**: Device Bearer Token
+- **Request Body**:
+  ```json
+  {
+    "device_id": "CC:BA:79:3A:45:90",
+    "role": "chest",
+    "firmware_version": "0.1.0",
+    "battery_pct": 98,
+    "battery_mv": 4120
+  }
+  ```
+- **Validation Rule**:
+  If the announced `role` differs from the registered role in the server database, the server returns `409 Conflict`:
+  ```json
+  {
+    "detail": "Role mismatch: announced 'left_shoulder' but registered as 'chest'"
+  }
+  ```
+- **Response** (`200 OK`):
+  ```json
+  {
+    "status": "ok",
+    "role": "chest",
+    "role_id": 1,
+    "session_active": false,
+    "recording_id": null,
+    "server_time_ms": 1727670005432
+  }
+  ```
+
+---
+
+#### `GET /v1/devices`
+List all registered devices, their online/streaming status, battery, loss %, and telemetry.
+
+- **Auth**: None (or Admin)
+- **Response** (`200 OK`):
+  ```json
+  [
+    {
+      "device_id": "CC:BA:79:3A:45:90",
+      "role": "chest",
+      "role_id": 1,
+      "online": true,
+      "firmware_version": "0.1.0",
+      "battery_pct": 98,
+      "battery_mv": 4120,
+      "rssi": -58,
+      "loss_pct": 0.02,
+      "total_samples": 4820,
+      "dropped_samples": 1,
+      "last_seen_ms": 1727670010000
+    }
+  ]
+  ```
+
+---
+
+### 5.2 Session & Export Endpoints
+
+#### `POST /v1/sessions`
+Start a recording session.
+
+- **Auth**: Admin Bearer Token
+- **Request Body**:
+  ```json
+  {
+    "name": "Squat Trial 01",
+    "description": "Athlete performing 10 reps"
+  }
+  ```
+- **Validation Rule**:
+  Returns `409 Conflict` if any role specified in `roles.yaml -> required_roles` is missing or offline:
+  ```json
+  {
+    "detail": "Cannot start session: missing required roles",
+    "missing_roles": ["left_foot", "right_foot"]
+  }
+  ```
+- **Response** (`201 Created`):
+  ```json
+  {
+    "session_id": "sess_8f2b3e81-2856-42bb-85bb-65231c5187cb",
+    "recording_id": "rec_squat_trial_01",
+    "name": "Squat Trial 01",
+    "status": "active",
+    "started_at": 1727670020000,
+    "participating_devices": [
+      { "device_id": "CC:BA:79:3A:45:90", "role": "chest" }
+    ]
+  }
+  ```
+
+---
+
+#### `POST /v1/sessions/{id}/end`
+End the current recording session and finalize the Parquet file.
+
+- **Auth**: Admin Bearer Token
+- **Response** (`200 OK`):
+  ```json
+  {
+    "session_id": "sess_8f2b3e81-2856-42bb-85bb-65231c5187cb",
+    "status": "completed",
+    "ended_at": 1727670140000,
+    "duration_s": 120.0,
+    "total_samples": 5760,
+    "parquet_path": "sessions_data/sess_8f2b3e81-2856-42bb-85bb-65231c5187cb.parquet"
+  }
+  ```
+
+---
+
+#### `GET /v1/sessions/{id}`
+Retrieve metadata, sample counts, and loss statistics for a session.
+
+- **Response** (`200 OK`):
+  ```json
+  {
+    "session_id": "sess_8f2b3e81-2856-42bb-85bb-65231c5187cb",
+    "name": "Squat Trial 01",
+    "status": "completed",
+    "started_at": 1727670020000,
+    "ended_at": 1727670140000,
+    "duration_s": 120.0,
+    "total_samples": 5760,
+    "loss_stats": {
+      "chest": { "samples": 5760, "dropped": 2, "loss_pct": 0.035 }
+    }
+  }
+  ```
+
+---
+
+#### `GET /v1/sessions/{id}/export`
+Download the recorded session dataset as an Apache Parquet file.
+
+- **Response**: `200 OK` with `Content-Type: application/vnd.apache.parquet` or `application/octet-stream`.
+
+---
+
+#### `GET /healthz`
+Health check endpoint.
+- **Response** (`200 OK`):
+  ```json
+  {
+    "status": "healthy",
+    "uptime_s": 1420,
+    "connected_devices": 3,
+    "active_session": null
+  }
+  ```
+
+---
+
+#### `GET /`
+Minimal web dashboard providing real-time HTML view of connected devices, assigned roles, battery levels, packet loss percentage, and active session controls.
+
+---
+
+## 6. Parquet Dataset Schema
+
+Each recorded session is written to a Parquet file structured with PyArrow:
+
+| Column Name | Arrow Type | Nullable | Description |
+|:---|:---|:---:|:---|
+| `recording_id` | `pa.string()` | No | Unique session or recording identifier |
+| `time_ms` | `pa.int64()` | No | Server-synced sample timestamp (ms) |
+| `role` | `pa.string()` | No | Human-readable role (e.g. `"chest"`) |
+| `seq` | `pa.uint32()` | No | Sample sequence number (`0..65535`) |
+| `server_rx_ms` | `pa.int64()` | No | Server timestamp when frame arrived (ms) |
+| `quat_w` | `pa.float32()` | No | Normalized Quaternion W component |
+| `quat_x` | `pa.float32()` | No | Normalized Quaternion X component |
+| `quat_y` | `pa.float32()` | No | Normalized Quaternion Y component |
+| `quat_z` | `pa.float32()` | No | Normalized Quaternion Z component |
+| `accel_x` | `pa.float32()` | Yes | Linear acceleration X ($\text{m/s}^2$) |
+| `accel_y` | `pa.float32()` | Yes | Linear acceleration Y ($\text{m/s}^2$) |
+| `accel_z` | `pa.float32()` | Yes | Linear acceleration Z ($\text{m/s}^2$) |
+| `gyro_x` | `pa.float32()` | Yes | Calibrated angular velocity X ($\text{rad/s}$) |
+| `gyro_y` | `pa.float32()` | Yes | Calibrated angular velocity Y ($\text{rad/s}$) |
+| `gyro_z` | `pa.float32()` | Yes | Calibrated angular velocity Z ($\text{rad/s}$) |
+| `mag_x` | `pa.float32()` | Yes | Calibrated magnetic field X ($\mu\text{T}$) |
+| `mag_y` | `pa.float32()` | Yes | Calibrated magnetic field Y ($\mu\text{T}$) |
+| `mag_z` | `pa.float32()` | Yes | Calibrated magnetic field Z ($\mu\text{T}$) |
+
+---
+
+## 7. Firmware Architecture & NVS Provisioning
+
+### 7.1 FreeRTOS Architecture
+The firmware operates two dedicated FreeRTOS tasks to guarantee IMU read regularity:
+1. **Sensor Task (Core 0 / Priority 5)**:
+   - Polls BNO085 at 48 Hz (~20.83 ms interval).
+   - Generates samples with sequence numbers and synced timestamps.
+   - Pushes to an internal FreeRTOS queue (`xQueueSend`).
+   - If network is disconnected, samples are queued into a 5-second circular ring buffer (~240 samples).
+   - **Never blocks on network or WiFi operations.**
+2. **Network Task (Core 1 / Priority 3)**:
+   - Manages WiFi connection with exponential backoff (`1s`, `2s`, `4s`, max `30s`).
+   - Resolves `eidon.local` via mDNS (fallback to configured IP/host).
+   - Performs `POST /v1/devices/announce`.
+   - Maintains WebSocket connection `/v1/devices/{id}/stream`.
+   - Flushes ring buffer with `flags bit 1 (backfill) = 1` upon reconnect.
+   - Batches 2 samples per binary frame.
+   - Dispatches incoming control commands and executes clock synchronization.
+
+### 7.2 USB Serial Provisioning Protocol
+Provisioning occurs over USB CDC Serial at 115200 baud with a line protocol:
+```text
+set ssid <WiFi SSID>
+set pass <WiFi Password>
+set server <Server Host or IP>
+set port <Server Port>
+set token <Device Auth Token>
+set role <role_name>
+show
+reboot
+```
+All parameters are stored in ESP32 NVS under namespace `eidon_cfg`. No secrets are kept in source code.
