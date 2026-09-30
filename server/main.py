@@ -291,7 +291,7 @@ async def get_firmware_manifest(hw: Optional[str] = Query("esp32c6")):
             parts.append({
                 "name": "firmware.bin",
                 "offset": 0,
-                "path": "/v1/firmware/esp12e/latest/firmware.bin",
+                "path": "/v1/firmware/flash/esp12e/firmware.bin",
                 "size": bin_file.stat().st_size,
             })
 
@@ -308,10 +308,10 @@ async def get_firmware_manifest(hw: Optional[str] = Query("esp32c6")):
     base_dir = c6_dir if c6_dir.exists() and (c6_dir / "firmware.bin").exists() else FIRMWARE_BIN_DIR
 
     manifest_parts = [
-        {"name": "bootloader.bin", "offset": 0, "path": "/v1/firmware/bootloader.bin"},
-        {"name": "partitions.bin", "offset": 32768, "path": "/v1/firmware/partitions.bin"}, # 0x8000
-        {"name": "boot_app0.bin", "offset": 57344, "path": "/v1/firmware/boot_app0.bin"},   # 0xe000
-        {"name": "firmware.bin", "offset": 65536, "path": "/v1/firmware/firmware.bin"},     # 0x10000
+        {"name": "bootloader.bin", "offset": 0, "path": "/v1/firmware/flash/esp32c6/bootloader.bin"},
+        {"name": "partitions.bin", "offset": 32768, "path": "/v1/firmware/flash/esp32c6/partitions.bin"}, # 0x8000
+        {"name": "boot_app0.bin", "offset": 57344, "path": "/v1/firmware/flash/esp32c6/boot_app0.bin"},   # 0xe000
+        {"name": "firmware.bin", "offset": 65536, "path": "/v1/firmware/flash/esp32c6/firmware.bin"},     # 0x10000
     ]
     available = []
     for part in manifest_parts:
@@ -329,6 +329,23 @@ async def get_firmware_manifest(hw: Optional[str] = Query("esp32c6")):
         "version": "1.0.0",
         "parts": available,
     }
+
+@app.get("/v1/firmware/flash/{hw}/{filename}")
+async def get_firmware_flash_part(hw: str, filename: str):
+    safe_name = Path(filename).name
+    # Check under FIRMWARE_BIN_DIR / hw / safe_name
+    target = FIRMWARE_BIN_DIR / hw / safe_name
+    if target.exists() and target.is_file():
+        return FileResponse(target, media_type="application/octet-stream", filename=safe_name)
+    # If safe_name is firmware.bin, resolve latest version
+    if safe_name == "firmware.bin":
+        bin_path, _ = _find_firmware_bin(version="latest", hw=hw)
+        return FileResponse(bin_path, media_type="application/octet-stream", filename=f"firmware_{hw}.bin")
+    # Check top-level FIRMWARE_BIN_DIR
+    top_p = FIRMWARE_BIN_DIR / safe_name
+    if top_p.exists() and top_p.is_file():
+        return FileResponse(top_p, media_type="application/octet-stream", filename=safe_name)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Flash part '{filename}' for '{hw}' not found")
 
 @app.get("/v1/firmware/{hw}/{version}/firmware.bin")
 async def get_hw_versioned_firmware_binary(

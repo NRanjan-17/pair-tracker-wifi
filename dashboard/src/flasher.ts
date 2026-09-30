@@ -42,22 +42,31 @@ export class TrackerFlasher {
       this.callbacks.onStepChange(1, 'Connecting to microcontroller via Web Serial...');
       this.callbacks.onLog('Requesting Serial Port... Please select your connected tracker board in the browser popup.\n');
 
-      const serialPort = await (navigator as any).serial.requestPort({
-        filters: [
-          { usbVendorId: 0x303a }, // Espressif VID
-          { usbVendorId: 0x2886 }, // Seeed VID
-          { usbVendorId: 0x1a86 }, // CH340 VID (common on ESP-12E / NodeMCU)
-          { usbVendorId: 0x10c4 }, // Silicon Labs CP210x
-          { usbVendorId: 0x0403 }, // FTDI
-        ],
-      });
+      let serialPort: any;
+      try {
+        serialPort = await (navigator as any).serial.requestPort({
+          filters: [
+            { usbVendorId: 0x303a }, // Espressif VID
+            { usbVendorId: 0x2886 }, // Seeed VID
+            { usbVendorId: 0x1a86 }, // CH340 VID (common on ESP-12E / NodeMCU)
+            { usbVendorId: 0x10c4 }, // Silicon Labs CP210x
+            { usbVendorId: 0x0403 }, // FTDI
+            { usbVendorId: 0x067b }, // Prolific
+          ],
+        });
+      } catch (err: any) {
+        if (err.name === 'NotFoundError') throw err; // User cancelled
+        // If filtered request failed, allow selecting any serial device
+        serialPort = await (navigator as any).serial.requestPort();
+      }
 
       this.callbacks.onLog('Serial port selected. Initializing esptool-js transport...\n');
       const transport = new Transport(serialPort);
 
+      // Connect at 115200 baud (native bootloader baud rate for ESP8266 and ESP32-C6)
       const esploader = new ESPLoader({
         transport,
-        baudrate: 921600,
+        baudrate: 115200,
         terminal: {
           clean: () => {},
           writeLine: (data: string) => this.callbacks.onLog(data + '\n'),
@@ -66,14 +75,7 @@ export class TrackerFlasher {
       });
 
       this.callbacks.onLog('Syncing with ROM bootloader...\n');
-      await esploader.main();
-
-      let chipName = '';
-      try {
-        chipName = await esploader.chip.getChipDescription(esploader);
-      } catch (e) {
-        // Fallback
-      }
+      const chipName = (await esploader.main()) || '';
       this.callbacks.onLog(`Detected chip: ${chipName || 'Unknown'}\n`);
 
       let detectedHw = 'esp32c6';
@@ -82,11 +84,24 @@ export class TrackerFlasher {
       } else if (chipName.toLowerCase().includes('c6')) {
         detectedHw = 'esp32c6';
       } else {
-        // Prompt user if chip cannot be determined automatically
-        const userChoice = window.confirm(
-          `Detected chip '${chipName || 'Unknown'}'. Is this an ESP-12E (ESP8266)?\nClick OK for ESP-12E, or Cancel for ESP32-C6.`
-        );
-        detectedHw = userChoice ? 'esp12e' : 'esp32c6';
+        // Fallback check on chip description
+        let desc = '';
+        try {
+          desc = (await esploader.chip.getChipDescription(esploader)) || '';
+        } catch (e) {
+          // ignore
+        }
+        if (desc.toLowerCase().includes('8266')) {
+          detectedHw = 'esp12e';
+        } else if (desc.toLowerCase().includes('c6')) {
+          detectedHw = 'esp32c6';
+        } else {
+          // Prompt user if chip cannot be determined automatically
+          const userChoice = window.confirm(
+            `Detected chip '${chipName || desc || 'Unknown'}'. Is this an ESP-12E (ESP8266)?\nClick OK for ESP-12E, or Cancel for ESP32-C6.`
+          );
+          detectedHw = userChoice ? 'esp12e' : 'esp32c6';
+        }
       }
       this.callbacks.onLog(`Using hardware target profile: ${detectedHw}\n`);
 
@@ -95,8 +110,8 @@ export class TrackerFlasher {
       try {
         mac = (await esploader.chip.readMac(esploader)).toUpperCase();
       } catch (e: any) {
-        this.callbacks.onLog(`Could not read MAC from chip eFuse: ${e.message}\n`);
-        throw new Error(`Failed to read MAC address from device: ${e.message}`);
+        this.callbacks.onLog(`Warning: Could not read MAC from chip eFuse: ${e.message}\n`);
+        mac = 'ESP_' + Math.random().toString(16).substring(2, 8).toUpperCase();
       }
       this.callbacks.onLog(`Device MAC Address: ${mac}\n`);
 
@@ -141,11 +156,16 @@ export class TrackerFlasher {
       }
 
       const fileArray: Array<{ data: Uint8Array; address: number }> = [];
+      const fetchHeaders: Record<string, string> = {};
+      if (deviceToken) {
+        fetchHeaders['Authorization'] = `Bearer ${deviceToken}`;
+      }
+
       for (const part of manifest.parts) {
         this.callbacks.onLog(`Downloading ${part.name} (offset 0x${part.offset.toString(16)})...\n`);
-        const partRes = await fetch(part.path);
+        const partRes = await fetch(part.path, { headers: fetchHeaders });
         if (!partRes.ok) {
-          throw new Error(`Failed to download ${part.name} from ${part.path}`);
+          throw new Error(`Failed to download ${part.name} from ${part.path} (${partRes.status} ${partRes.statusText})`);
         }
         const buf = await partRes.arrayBuffer();
         fileArray.push({
@@ -179,39 +199,53 @@ export class TrackerFlasher {
       } catch (e) {
         // hard_reset might disconnect transport
       }
-      await transport.disconnect();
+      try {
+        await transport.disconnect();
+      } catch (e) {
+        // ignore
+      }
 
       // Step 5: Send Provisioning Serial Commands
       const targetBaud = detectedHw === 'esp12e' ? 9600 : 115200;
       this.callbacks.onStepChange(5, 'Provisioning WiFi credentials and role over Serial...');
       this.callbacks.onLog(`Opening serial port at ${targetBaud} baud for line protocol CLI...\n`);
 
-      await new Promise((r) => setTimeout(r, 1200)); // Allow chip to boot into firmware
+      // Allow chip to finish reset and boot into firmware
+      const waitMs = detectedHw === 'esp12e' ? 2500 : 1500;
+      await new Promise((r) => setTimeout(r, waitMs));
 
-      await serialPort.open({ baudRate: targetBaud });
-      const textEncoder = new TextEncoder();
-      const writer = serialPort.writable.getWriter();
+      try {
+        await serialPort.open({ baudRate: targetBaud });
+        const textEncoder = new TextEncoder();
+        const writer = serialPort.writable.getWriter();
 
-      const commands = [
-        `set ssid ${config.ssid}\n`,
-        `set pass ${config.password}\n`,
-        `set server ${config.serverHost}\n`,
-        `set port ${config.serverPort}\n`,
-        `set token ${deviceToken}\n`,
-        `set role ${config.role}\n`,
-        `show\n`,
-        `reboot\n`,
-      ];
+        // Clear any startup serial buffer noise
+        await writer.write(textEncoder.encode('\r\n\r\n'));
+        await new Promise((r) => setTimeout(r, 200));
 
-      for (const cmd of commands) {
-        this.callbacks.onLog(`> ${cmd.trim()}\n`);
-        await writer.write(textEncoder.encode(cmd));
-        await new Promise((r) => setTimeout(r, 150));
+        const commands = [
+          `set ssid ${config.ssid}\n`,
+          `set pass ${config.password}\n`,
+          `set server ${config.serverHost}\n`,
+          `set port ${config.serverPort}\n`,
+          `set token ${deviceToken}\n`,
+          `set role ${config.role}\n`,
+          `show\n`,
+          `reboot\n`,
+        ];
+
+        for (const cmd of commands) {
+          this.callbacks.onLog(`> ${cmd.trim()}\n`);
+          await writer.write(textEncoder.encode(cmd));
+          await new Promise((r) => setTimeout(r, 150));
+        }
+
+        writer.releaseLock();
+        await serialPort.close();
+        this.callbacks.onLog('Provisioning commands applied and device reboot command issued.\n');
+      } catch (provErr: any) {
+        this.callbacks.onLog(`Note: Automatic serial provisioning could not open port (${provErr.message}). You can provision via CLI monitor at ${targetBaud} baud.\n`);
       }
-
-      writer.releaseLock();
-      await serialPort.close();
-      this.callbacks.onLog('Provisioning commands applied and device reboot command issued.\n');
 
       // Step 6: Wait for Device Announce
       this.callbacks.onStepChange(6, 'Waiting for device to announce on WiFi...');

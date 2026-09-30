@@ -50,6 +50,26 @@ def test_firmware_binary_not_found():
     res = client.get("/v1/firmware/nonexistent_file.bin")
     assert res.status_code == 404
 
+def test_esp12e_firmware_manifest_and_binary_download():
+    """Verify that firmware manifest and binary download endpoints serve ESP-12E binary."""
+    res = client.get("/v1/firmware/manifest?hw=esp12e")
+    assert res.status_code == 200
+    manifest = res.json()
+    assert manifest["chip"] == "esp8266"
+    assert manifest["board"] == "esp12e"
+    assert manifest["baud"] == 9600
+    assert len(manifest["parts"]) == 1
+    part = manifest["parts"][0]
+    assert part["name"] == "firmware.bin"
+    assert part["offset"] == 0
+    assert part["path"] == "/v1/firmware/flash/esp12e/firmware.bin"
+    assert part["size"] > 0
+
+    bin_res = client.get(part["path"])
+    assert bin_res.status_code == 200
+    assert bin_res.headers["content-type"] == "application/octet-stream"
+    assert len(bin_res.content) == part["size"]
+
 def test_device_register_and_token_generation():
     """Verify that register endpoint generates token if omitted and returns token."""
     device_mac = "34:85:18:A1:B2:C3"
