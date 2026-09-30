@@ -1,19 +1,33 @@
 import * as THREE from 'three';
+import { AvatarRig, bnoToThreeQuat } from './avatar';
+import { JitterBuffer } from './jitter_buffer';
+import { SampleMessage } from './types';
 
 export class ThreeVisualizer {
   private container: HTMLElement;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private renderer: THREE.WebGLRenderer;
-  private trackerNodes: Map<string, THREE.Group> = new Map();
+  public avatar: AvatarRig;
+  public jitterBuffer: JitterBuffer;
+
   private isMouseDown = false;
   private mousePrev = { x: 0, y: 0 };
-  private spherical = { radius: 4.5, theta: Math.PI / 4, phi: Math.PI / 3 };
+  private spherical = { radius: 3.2, theta: 0, phi: Math.PI / 2.2 };
+  private cameraTarget = new THREE.Vector3(0, 1.05, 0);
+
+  // Latency & performance tracking
+  public currentLatencyMs: number = 0;
+  public onLatencyUpdate?: (latencyMs: number) => void;
+  public onFpsUpdate?: (fps: number) => void;
+
+  private frameCount = 0;
+  private lastFpsCheck = performance.now();
 
   constructor(container: HTMLElement) {
     this.container = container;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x060913);
+    this.scene.background = new THREE.Color(0x070b14);
 
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
@@ -23,42 +37,65 @@ export class ThreeVisualizer {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.setupLighting();
     this.setupEnvironment();
     this.setupControls();
 
+    // Initialize JitterBuffer and AvatarRig
+    this.jitterBuffer = new JitterBuffer();
+    this.avatar = new AvatarRig(this.scene);
+
     window.addEventListener('resize', () => this.onResize());
     this.animate();
   }
 
   private setupLighting() {
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    // Ambient light
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
     this.scene.add(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
-    dirLight.position.set(5, 10, 7);
-    dirLight.castShadow = true;
-    this.scene.add(dirLight);
+    // Key Light
+    const keyLight = new THREE.DirectionalLight(0x38bdf8, 1.4);
+    keyLight.position.set(4, 8, 6);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.width = 1024;
+    keyLight.shadow.mapSize.height = 1024;
+    this.scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
-    fillLight.position.set(-5, -5, -5);
+    // Fill Light
+    const fillLight = new THREE.DirectionalLight(0x818cf8, 0.7);
+    fillLight.position.set(-5, 4, 3);
     this.scene.add(fillLight);
+
+    // Rim Light (from behind for sleek silhouette)
+    const rimLight = new THREE.DirectionalLight(0x0ea5e9, 0.9);
+    rimLight.position.set(0, 5, -6);
+    this.scene.add(rimLight);
   }
 
   private setupEnvironment() {
-    // Floor grid
-    const grid = new THREE.GridHelper(10, 20, 0x0284c7, 0x1e293b);
-    grid.position.y = -1.2;
+    // Cyberpunk grid floor
+    const grid = new THREE.GridHelper(8, 24, 0x0284c7, 0x1e293b);
+    grid.position.y = 0;
     this.scene.add(grid);
 
-    // Subtle coordinate indicator at origin
-    const axes = new THREE.AxesHelper(0.3);
-    axes.position.y = -1.19;
-    this.scene.add(axes);
+    // Floor shadow receiver disc
+    const floorGeo = new THREE.CircleGeometry(4, 32);
+    const floorMat = new THREE.MeshStandardMaterial({
+      color: 0x090e1a,
+      roughness: 0.9,
+      metalness: 0.1,
+    });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.01;
+    floor.receiveShadow = true;
+    this.scene.add(floor);
   }
 
   private setupControls() {
@@ -74,8 +111,8 @@ export class ThreeVisualizer {
       const dy = e.clientY - this.mousePrev.y;
       this.mousePrev = { x: e.clientX, y: e.clientY };
 
-      this.spherical.theta -= dx * 0.008;
-      this.spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, this.spherical.phi - dy * 0.008));
+      this.spherical.theta -= dx * 0.007;
+      this.spherical.phi = Math.max(0.1, Math.min(Math.PI / 2.05, this.spherical.phi - dy * 0.007));
       this.updateCameraPosition();
     });
 
@@ -85,95 +122,68 @@ export class ThreeVisualizer {
 
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.spherical.radius = Math.max(1.5, Math.min(15.0, this.spherical.radius + e.deltaY * 0.005));
+      this.spherical.radius = Math.max(1.2, Math.min(8.0, this.spherical.radius + e.deltaY * 0.003));
       this.updateCameraPosition();
     });
   }
 
   private updateCameraPosition() {
     const sinPhi = Math.sin(this.spherical.phi);
-    this.camera.position.x = this.spherical.radius * sinPhi * Math.sin(this.spherical.theta);
-    this.camera.position.y = this.spherical.radius * Math.cos(this.spherical.phi);
-    this.camera.position.z = this.spherical.radius * sinPhi * Math.cos(this.spherical.theta);
-    this.camera.lookAt(0, 0.2, 0);
+    this.camera.position.x = this.cameraTarget.x + this.spherical.radius * sinPhi * Math.sin(this.spherical.theta);
+    this.camera.position.y = this.cameraTarget.y + this.spherical.radius * Math.cos(this.spherical.phi);
+    this.camera.position.z = this.cameraTarget.z + this.spherical.radius * sinPhi * Math.cos(this.spherical.theta);
+    this.camera.lookAt(this.cameraTarget);
   }
 
   public resetCamera() {
-    this.spherical = { radius: 4.5, theta: Math.PI / 4, phi: Math.PI / 3 };
+    this.spherical = { radius: 3.2, theta: 0, phi: Math.PI / 2.2 };
+    this.cameraTarget.set(0, 1.05, 0);
     this.updateCameraPosition();
   }
 
-  // Get or create a 3D visualization node for a body role
-  public getOrCreateTrackerNode(role: string): THREE.Group {
-    if (this.trackerNodes.has(role)) {
-      return this.trackerNodes.get(role)!;
-    }
+  public handleSample(sample: SampleMessage) {
+    // Coordinate frame conversion once in one function
+    const [qw, qx, qy, qz] = sample.quat;
+    const threeQuat = bnoToThreeQuat(qw, qx, qy, qz);
 
-    const group = new THREE.Group();
-    const pos = this.getDefaultRolePosition(role);
-    group.position.set(pos.x, pos.y, pos.z);
-
-    // Create stylish sensor box
-    const boxGeo = new THREE.BoxGeometry(0.28, 0.16, 0.42);
-    const boxMat = new THREE.MeshStandardMaterial({
-      color: 0x0284c7,
-      metalness: 0.6,
-      roughness: 0.2,
-      emissive: 0x0369a1,
-      emissiveIntensity: 0.2,
-    });
-    const box = new THREE.Mesh(boxGeo, boxMat);
-    box.castShadow = true;
-    group.add(box);
-
-    // Add Axes Helper to show orientation
-    const axes = new THREE.AxesHelper(0.35);
-    group.add(axes);
-
-    this.scene.add(group);
-    this.trackerNodes.set(role, group);
-    return group;
+    // Push into jitter buffer with server-synced time
+    this.jitterBuffer.pushSample(
+      sample.role,
+      sample.seq,
+      sample.t_ms,
+      sample.server_time_ms || Date.now(),
+      threeQuat
+    );
   }
 
-  // Update orientation for a role
-  public updateOrientation(role: string, quat: [number, number, number, number]) {
-    const node = this.getOrCreateTrackerNode(role);
-    // Three.js Quaternion is (x, y, z, w)
-    const [qw, qx, qy, qz] = quat;
-    node.quaternion.set(qx, qy, qz, qw);
+  public calibratePose() {
+    // Capture current quaternions for all bones in the jitter buffer
+    const currentQuats = new Map<string, THREE.Quaternion>();
+    const nowPerf = performance.now();
+
+    for (const bone of this.avatar.skeleton.bones) {
+      const data = this.jitterBuffer.getInterpolatedQuaternion(bone.name, nowPerf);
+      if (data && data.isOnline) {
+        currentQuats.set(bone.name, data.quat);
+      }
+    }
+
+    this.avatar.calibratePose(currentQuats);
   }
 
-  private getDefaultRolePosition(role: string): { x: number; y: number; z: number } {
-    switch (role) {
-      case 'chest':
-        return { x: 0, y: 0.9, z: 0 };
-      case 'left_shoulder':
-        return { x: -0.4, y: 1.1, z: 0 };
-      case 'right_shoulder':
-        return { x: 0.4, y: 1.1, z: 0 };
-      case 'left_upper_arm':
-        return { x: -0.55, y: 0.8, z: 0 };
-      case 'right_upper_arm':
-        return { x: 0.55, y: 0.8, z: 0 };
-      case 'left_forearm':
-        return { x: -0.65, y: 0.45, z: 0 };
-      case 'right_forearm':
-        return { x: 0.65, y: 0.45, z: 0 };
-      case 'left_thigh':
-        return { x: -0.25, y: 0.3, z: 0 };
-      case 'right_thigh':
-        return { x: 0.25, y: 0.3, z: 0 };
-      case 'left_shin':
-        return { x: -0.25, y: -0.35, z: 0 };
-      case 'right_shin':
-        return { x: 0.25, y: -0.35, z: 0 };
-      case 'left_foot':
-        return { x: -0.28, y: -0.9, z: 0.1 };
-      case 'right_foot':
-        return { x: 0.28, y: -0.9, z: 0.1 };
-      default:
-        return { x: 0, y: 0, z: 0 };
+  public reZeroYaw() {
+    // Capture current quaternions for yaw re-zero
+    const currentQuats = new Map<string, THREE.Quaternion>();
+    const nowPerf = performance.now();
+
+    for (const bone of this.avatar.skeleton.bones) {
+      const data = this.jitterBuffer.getInterpolatedQuaternion(bone.name, nowPerf);
+      if (data && data.isOnline) {
+        currentQuats.set(bone.name, data.quat);
+      }
     }
+
+    this.avatar.reZeroYaw(currentQuats);
   }
 
   private onResize() {
@@ -186,6 +196,58 @@ export class ThreeVisualizer {
 
   private animate() {
     requestAnimationFrame(() => this.animate());
+
+    const nowPerf = performance.now();
+
+    // 1. Gather slerp-interpolated quaternions from jitter buffer for each bone
+    const boneSensors = new Map<string, { quat: THREE.Quaternion; isOnline: boolean }>();
+    let totalLatency = 0;
+    let latencyCount = 0;
+
+    for (const bone of this.avatar.skeleton.bones) {
+      const interp = this.jitterBuffer.getInterpolatedQuaternion(bone.name, nowPerf);
+      if (interp) {
+        boneSensors.set(bone.name, {
+          quat: interp.quat,
+          isOnline: interp.isOnline,
+        });
+
+        if (interp.isOnline) {
+          totalLatency += interp.latencyMs;
+          latencyCount++;
+        }
+      } else {
+        boneSensors.set(bone.name, {
+          quat: new THREE.Quaternion(0, 0, 0, 1),
+          isOnline: false,
+        });
+      }
+    }
+
+    // 2. Drive avatar with hierarchical forward kinematics:
+    // Bone rotation = inverse(parent world rotation) * child world rotation, after offsets
+    this.avatar.updatePoses(boneSensors);
+
+    // 3. Update measured latency
+    if (latencyCount > 0) {
+      this.currentLatencyMs = Math.round(totalLatency / latencyCount);
+      if (this.onLatencyUpdate) {
+        this.onLatencyUpdate(this.currentLatencyMs);
+      }
+    }
+
+    // 4. Update FPS counter
+    this.frameCount++;
+    if (nowPerf - this.lastFpsCheck >= 1000) {
+      const fps = Math.round((this.frameCount * 1000) / (nowPerf - this.lastFpsCheck));
+      this.frameCount = 0;
+      this.lastFpsCheck = nowPerf;
+      if (this.onFpsUpdate) {
+        this.onFpsUpdate(fps);
+      }
+    }
+
+    // 5. Render Three.js scene
     this.renderer.render(this.scene, this.camera);
   }
 }

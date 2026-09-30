@@ -223,12 +223,14 @@ class TrackerManager:
             if (now_mono - last_broadcast) >= (1.0 / 60.0):
                 self.last_broadcast_sample_time[device_id] = now_mono
                 latest = frame.samples[-1]
+                server_now_ms = int(time.time() * 1000)
                 sample_msg = {
                     "type": "sample",
                     "device_id": device_id,
                     "role": conn.role,
                     "seq": latest.seq,
                     "t_ms": latest.t_ms,
+                    "server_time_ms": server_now_ms,
                     "quat": [latest.quat_w, latest.quat_x, latest.quat_y, latest.quat_z],
                     "accel": [latest.accel_x, latest.accel_y, latest.accel_z] if latest.accel_x is not None else None,
                     "gyro": [latest.gyro_x, latest.gyro_y, latest.gyro_z] if latest.gyro_x is not None else None,
@@ -242,6 +244,7 @@ class TrackerManager:
                     "role": conn.role,
                     "seq": latest.seq,
                     "t_ms": latest.t_ms,
+                    "server_time_ms": server_now_ms,
                     "quat": [latest.quat_w, latest.quat_x, latest.quat_y, latest.quat_z],
                     "loss_pct": conn.loss_pct,
                 })

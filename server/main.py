@@ -350,6 +350,7 @@ async def dashboard_stream_endpoint(websocket: WebSocket):
             "required_roles": roles_registry.required_roles,
             "devices": tracker_manager.get_device_summary(),
             "active_session": active_sess,
+            "server_time_ms": int(time.time() * 1000),
         })
     except Exception:
         pass

@@ -22,6 +22,7 @@ export interface SampleMessage {
   role: string;
   seq: number;
   t_ms: number;
+  server_time_ms?: number;
   quat: [number, number, number, number]; // [w, x, y, z]
   accel?: [number, number, number] | null;
   gyro?: [number, number, number] | null;
@@ -44,4 +45,5 @@ export interface InitMessage {
   required_roles: string[];
   devices: DeviceState[];
   active_session: SessionInfo | null;
+  server_time_ms?: number;
 }

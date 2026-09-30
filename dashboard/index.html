@@ -48,23 +48,34 @@
         <section class="panel-viewport">
           <div class="viewport-header">
             <div class="viewport-title">
-              <h2>3D Biomechanical View</h2>
-              <span class="subtle">Interactive 3D Orientation (Three.js)</span>
+              <h2>3D Biomechanical Avatar</h2>
+              <span class="subtle">Live Quaternion Forward Kinematics (Three.js)</span>
             </div>
             <div class="viewport-controls">
-              <button id="btnResetCamera" class="btn btn-sm btn-secondary">Reset Camera</button>
+              <span id="calibBadge" class="badge-calib badge-calib-pending">Needs N-Pose Calib</span>
+              <button id="btnCalibratePose" class="btn btn-sm btn-primary" title="Stand in N-pose (arms down) and capture offsets">⚡ Calibrate Pose</button>
+              <button id="btnReZero" class="btn btn-sm btn-secondary" title="Fix yaw heading drift while facing forward">🔄 Re-Zero</button>
+              <button id="btnResetCamera" class="btn btn-sm btn-secondary">Reset Cam</button>
             </div>
           </div>
 
           <div id="threeContainer" class="canvas-wrapper"></div>
 
           <div class="telemetry-bar">
+            <div class="telemetry-item highlight">
+              <span class="lbl">End-to-End Latency</span>
+              <span id="valLatency" class="val text-success">~75 ms</span>
+            </div>
             <div class="telemetry-item">
-              <span class="lbl">FPS</span>
+              <span class="lbl">Jitter Buffer</span>
+              <span id="valJitter" class="val">75 ms (Slerp)</span>
+            </div>
+            <div class="telemetry-item">
+              <span class="lbl">Renderer FPS</span>
               <span id="valFps" class="val">60</span>
             </div>
             <div class="telemetry-item">
-              <span class="lbl">Sample Stream Rate</span>
+              <span class="lbl">Sample Rate</span>
               <span id="valRate" class="val">~48 Hz</span>
             </div>
             <div class="telemetry-item">

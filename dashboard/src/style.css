@@ -407,6 +407,11 @@ body {
   flex-direction: column;
 }
 
+.telemetry-item.highlight {
+  border-left: 2px solid var(--accent);
+  padding-left: 12px;
+}
+
 .telemetry-item .lbl {
   font-size: 0.68rem;
   text-transform: uppercase;
@@ -417,4 +422,36 @@ body {
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--accent);
+}
+
+.text-success {
+  color: var(--success) !important;
+}
+
+.text-warning {
+  color: #f59e0b !important;
+}
+
+.badge-calib {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.badge-calib-pending {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.badge-calib-done {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
 }

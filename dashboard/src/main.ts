@@ -29,15 +29,58 @@ class DashboardApp {
     const btnStart = document.getElementById('btnStartSession') as HTMLButtonElement;
     const btnEnd = document.getElementById('btnEndSession') as HTMLButtonElement;
     const btnResetCam = document.getElementById('btnResetCamera') as HTMLButtonElement;
+    const btnCalib = document.getElementById('btnCalibratePose') as HTMLButtonElement;
+    const btnReZero = document.getElementById('btnReZero') as HTMLButtonElement;
 
     btnStart.addEventListener('click', () => this.startSession());
     btnEnd.addEventListener('click', () => this.endSession());
     btnResetCam.addEventListener('click', () => this.visualizer.resetCamera());
+
+    if (btnCalib) {
+      btnCalib.addEventListener('click', () => this.calibratePose());
+    }
+    if (btnReZero) {
+      btnReZero.addEventListener('click', () => this.reZeroYaw());
+    }
   }
 
   private initVisualizer() {
     const container = document.getElementById('threeContainer')!;
     this.visualizer = new ThreeVisualizer(container);
+
+    const valLatency = document.getElementById('valLatency');
+    this.visualizer.onLatencyUpdate = (latencyMs: number) => {
+      if (valLatency) {
+        valLatency.innerText = `${latencyMs} ms`;
+        if (latencyMs < 100) {
+          valLatency.className = 'val text-success';
+        } else if (latencyMs < 150) {
+          valLatency.className = 'val text-warning';
+        } else {
+          valLatency.className = 'val';
+        }
+      }
+    };
+
+    const valFps = document.getElementById('valFps');
+    this.visualizer.onFpsUpdate = (fps: number) => {
+      if (valFps) {
+        valFps.innerText = `${fps}`;
+      }
+    };
+  }
+
+  public calibratePose() {
+    this.visualizer.calibratePose();
+    const badge = document.getElementById('calibBadge');
+    if (badge) {
+      badge.className = 'badge-calib badge-calib-done';
+      badge.innerText = '✓ N-Pose Calibrated';
+    }
+  }
+
+  public reZeroYaw() {
+    this.visualizer.reZeroYaw();
   }
 
   private connectWebSocket() {
@@ -79,6 +122,10 @@ class DashboardApp {
         this.devices.clear();
         this.roleToDevice.clear();
 
+        if (init.server_time_ms) {
+          this.visualizer.jitterBuffer.setServerTimeSync(init.server_time_ms);
+        }
+
         if (init.devices) {
           for (const d of init.devices) {
             this.devices.set(d.device_id, d);
@@ -111,8 +158,8 @@ class DashboardApp {
       case 'pose_update': {
         const sample = msg as SampleMessage;
         this.sampleCount++;
-        // Update 3D orientation
-        this.visualizer.updateOrientation(sample.role, sample.quat);
+        // Push sample to 3D avatar visualizer jitter buffer
+        this.visualizer.handleSample(sample);
 
         // Update live stats on device state
         const dev = this.roleToDevice.get(sample.role);

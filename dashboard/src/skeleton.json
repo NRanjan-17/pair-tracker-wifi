@@ -1,0 +1,141 @@
+{
+  "root": "chest",
+  "height": 1.75,
+  "bones": [
+    {
+      "name": "chest",
+      "parent": null,
+      "length": 0.36,
+      "position": [0, 1.25, 0],
+      "direction": [0, 1, 0],
+      "radius": 0.05,
+      "color": "#0ea5e9"
+    },
+    {
+      "name": "left_shoulder",
+      "parent": "chest",
+      "length": 0.16,
+      "position": [0.18, 0.14, 0],
+      "direction": [1, 0, 0],
+      "radius": 0.04,
+      "color": "#818cf8"
+    },
+    {
+      "name": "left_upper_arm",
+      "parent": "left_shoulder",
+      "length": 0.28,
+      "position": [0.16, 0, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.038,
+      "color": "#a855f7"
+    },
+    {
+      "name": "left_forearm",
+      "parent": "left_upper_arm",
+      "length": 0.25,
+      "position": [0, -0.28, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.032,
+      "color": "#c084fc"
+    },
+    {
+      "name": "left_hand",
+      "parent": "left_forearm",
+      "length": 0.14,
+      "position": [0, -0.25, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.026,
+      "color": "#e879f9"
+    },
+    {
+      "name": "right_shoulder",
+      "parent": "chest",
+      "length": 0.16,
+      "position": [-0.18, 0.14, 0],
+      "direction": [-1, 0, 0],
+      "radius": 0.04,
+      "color": "#818cf8"
+    },
+    {
+      "name": "right_upper_arm",
+      "parent": "right_shoulder",
+      "length": 0.28,
+      "position": [-0.16, 0, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.038,
+      "color": "#a855f7"
+    },
+    {
+      "name": "right_forearm",
+      "parent": "right_upper_arm",
+      "length": 0.25,
+      "position": [0, -0.28, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.032,
+      "color": "#c084fc"
+    },
+    {
+      "name": "right_hand",
+      "parent": "right_forearm",
+      "length": 0.14,
+      "position": [0, -0.25, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.026,
+      "color": "#e879f9"
+    },
+    {
+      "name": "left_thigh",
+      "parent": "chest",
+      "length": 0.42,
+      "position": [0.10, -0.28, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.045,
+      "color": "#10b981"
+    },
+    {
+      "name": "left_shin",
+      "parent": "left_thigh",
+      "length": 0.40,
+      "position": [0, -0.42, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.038,
+      "color": "#34d399"
+    },
+    {
+      "name": "left_foot",
+      "parent": "left_shin",
+      "length": 0.18,
+      "position": [0, -0.40, 0],
+      "direction": [0, 0, 1],
+      "radius": 0.03,
+      "color": "#6ee7b7"
+    },
+    {
+      "name": "right_thigh",
+      "parent": "chest",
+      "length": 0.42,
+      "position": [-0.10, -0.28, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.045,
+      "color": "#10b981"
+    },
+    {
+      "name": "right_shin",
+      "parent": "right_thigh",
+      "length": 0.40,
+      "position": [0, -0.42, 0],
+      "direction": [0, -1, 0],
+      "radius": 0.038,
+      "color": "#34d399"
+    },
+    {
+      "name": "right_foot",
+      "parent": "right_shin",
+      "length": 0.18,
+      "position": [0, -0.40, 0],
+      "direction": [0, 0, 1],
+      "radius": 0.03,
+      "color": "#6ee7b7"
+    }
+  ]
+}

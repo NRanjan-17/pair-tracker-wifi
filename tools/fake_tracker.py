@@ -35,6 +35,7 @@ class SimulatedTracker:
         packet_loss_rate: float = 0.0,
         clock_skew_ms: int = 0,
         include_raw: bool = False,
+        motion: str = "sinusoid",
     ):
         self.device_id = device_id
         self.role = role
@@ -44,6 +45,7 @@ class SimulatedTracker:
         self.packet_loss_rate = packet_loss_rate
         self.clock_skew_ms = clock_skew_ms
         self.include_raw = include_raw
+        self.motion = motion
 
         self.seq = 0
         self.running = False
@@ -97,21 +99,83 @@ class SimulatedTracker:
     def generate_sample(self) -> TrackerSample:
         self.seq = (self.seq + 1) & 0xFFFF
         t_ms = self.current_synced_time_ms()
+        t_sec = t_ms / 1000.0
 
-        # Simulated smooth rotation
-        angle = (t_ms / 1000.0) * math.pi * 0.5
-        qw = math.cos(angle / 2.0)
-        qx = 0.0
-        qy = math.sin(angle / 2.0)
-        qz = 0.0
-
-        if self.include_raw:
-            ax = 0.0
-            ay = 9.81 + 0.1 * math.sin(angle)
-            az = 0.05 * math.cos(angle)
+        if self.motion == "sinusoid":
+            if self.role in ["right_hand", "left_hand"]:
+                # Sinusoidal hand wrist flexion/extension (+/- 40 deg at 0.75 Hz)
+                freq = 0.75
+                max_rad = math.radians(40.0)
+                angle = max_rad * math.sin(2.0 * math.pi * freq * t_sec)
+                half = angle / 2.0
+                qw = math.cos(half)
+                qx = math.sin(half)  # Pitch/flexion in BNO085 frame
+                qy = 0.0
+                qz = 0.0
+                gx = max_rad * (2.0 * math.pi * freq) * math.cos(2.0 * math.pi * freq * t_sec)
+                gy = 0.0
+                gz = 0.0
+            elif self.role == "chest":
+                # Subtle upright torso breathing sway (+/- 2 deg at 0.25 Hz)
+                freq = 0.25
+                max_rad = math.radians(2.0)
+                angle = max_rad * math.sin(2.0 * math.pi * freq * t_sec)
+                half = angle / 2.0
+                qw = math.cos(half)
+                qx = math.sin(half)
+                qy = 0.0
+                qz = 0.0
+                gx = 0.0
+                gy = 0.0
+                gz = 0.0
+            elif "upper_arm" in self.role or "forearm" in self.role:
+                # Arm sinusoidal swing (+/- 25 deg at 0.5 Hz)
+                freq = 0.5
+                max_rad = math.radians(25.0)
+                angle = max_rad * math.sin(2.0 * math.pi * freq * t_sec)
+                half = angle / 2.0
+                qw = math.cos(half)
+                qx = math.sin(half)
+                qy = 0.0
+                qz = 0.0
+                gx = max_rad * (2.0 * math.pi * freq) * math.cos(2.0 * math.pi * freq * t_sec)
+                gy = 0.0
+                gz = 0.0
+            else:
+                # General smooth oscillation
+                freq = 0.6
+                max_rad = math.radians(30.0)
+                angle = max_rad * math.sin(2.0 * math.pi * freq * t_sec)
+                half = angle / 2.0
+                qw = math.cos(half)
+                qx = 0.0
+                qy = math.sin(half)
+                qz = 0.0
+                gx = 0.0
+                gy = max_rad * (2.0 * math.pi * freq) * math.cos(2.0 * math.pi * freq * t_sec)
+                gz = 0.0
+        elif self.motion == "spin":
+            angle = t_sec * math.pi * 0.5
+            qw = math.cos(angle / 2.0)
+            qx = 0.0
+            qy = math.sin(angle / 2.0)
+            qz = 0.0
             gx = 0.0
             gy = 0.5
             gz = 0.0
+        else: # static / identity
+            qw = 1.0
+            qx = 0.0
+            qy = 0.0
+            qz = 0.0
+            gx = 0.0
+            gy = 0.0
+            gz = 0.0
+
+        if self.include_raw:
+            ax = 0.0
+            ay = 9.81 + 0.1 * math.sin(t_sec)
+            az = 0.05 * math.cos(t_sec)
             mx = 20.0
             my = -15.0
             mz = 45.0
@@ -294,6 +358,12 @@ async def main():
     parser.add_argument("--loss", type=float, default=0.0, help="Packet loss probability (0.0 to 1.0)")
     parser.add_argument("--skew", type=int, default=50, help="Clock skew in ms")
     parser.add_argument("--raw", action="store_true", help="Include 9-float raw IMU data in samples")
+    parser.add_argument(
+        "--motion",
+        choices=["sinusoid", "spin", "static"],
+        default="sinusoid",
+        help="Motion profile (default: sinusoid for smooth biomechanical oscillation)",
+    )
     parser.add_argument("--duration", type=int, default=0, help="Run duration in seconds (0 = infinite)")
     args = parser.parse_args()
 
@@ -304,7 +374,7 @@ async def main():
     else:
         target_roles = [r.strip() for r in args.roles.split(",") if r.strip()]
 
-    print(f"Starting fake trackers for {len(target_roles)} roles: {target_roles}")
+    print(f"Starting fake trackers for {len(target_roles)} roles: {target_roles} (motion={args.motion})")
 
     trackers = []
     for i, role in enumerate(target_roles):
@@ -318,6 +388,7 @@ async def main():
             packet_loss_rate=args.loss,
             clock_skew_ms=args.skew,
             include_raw=args.raw,
+            motion=args.motion,
         )
         trackers.append(t)
 

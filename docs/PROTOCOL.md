@@ -596,3 +596,50 @@ show
 reboot
 ```
 All parameters are stored in ESP32 NVS under namespace `eidon_cfg`. No secrets are kept in source code.
+
+---
+
+## 8. 3D Biomechanical Avatar & Kinematics Engine
+
+The web dashboard incorporates a Three.js biomechanical avatar driven in real-time by the incoming quaternion stream.
+
+### 8.1 Coordinate Frame Transformation
+The BNO085 IMU reports rotations in a right-handed **Z-up** reference frame ($+X = \text{Right}, +Y = \text{Forward}, +Z = \text{Up}$). Three.js renders in a right-handed **Y-up** reference frame ($+X = \text{Right}, +Y = \text{Up}, +Z = \text{Backward} / -\text{Forward}$).
+
+Conversion is executed in a single dedicated function (`bnoToThreeQuat`):
+$$\mathbf{q}_{\text{three}} = \begin{bmatrix} q_x \\ q_z \\ -q_y \\ q_w \end{bmatrix}$$
+where Three.js quaternion components are $(x, y, z, w)$.
+
+### 8.2 Data-Driven Skeleton Hierarchy (`skeleton.json`)
+The avatar skeleton is configured via a data-driven JSON document specifying parent relationships, bone lengths, and rest positions:
+- **Upper Body Chain**:
+  - `chest` (root, position: `[0, 1.25, 0]`)
+  - `left_shoulder` $\rightarrow$ `left_upper_arm` $\rightarrow$ `left_forearm` $\rightarrow$ `left_hand`
+  - `right_shoulder` $\rightarrow$ `right_upper_arm` $\rightarrow$ `right_forearm` $\rightarrow$ `right_hand`
+- **Lower Body Chain** (configured for future multi-point tracking):
+  - `left_thigh` $\rightarrow$ `left_shin` $\rightarrow$ `left_foot`
+  - `right_thigh` $\rightarrow$ `right_shin` $\rightarrow$ `right_foot`
+
+### 8.3 N-Pose Calibration & Heading Re-Zero
+Because the firmware operates Game Rotation Vector without magnetometer reliance, each sensor initializes with an arbitrary yaw heading:
+1. **Calibrate Pose**:
+   - The user stands facing forward in an N-pose (arms down alongside torso).
+   - The dashboard captures each sensor's converted orientation $\mathbf{Q}_{\text{sensor, calib}}$.
+   - Per-bone mounting/heading offset is computed as:
+     $$\mathbf{Q}_{\text{offset}} = \mathbf{Q}_{\text{sensor, calib}}^{-1}$$
+   - In rest N-pose, calibrated world rotation evaluates to Identity ($\mathbf{Q}_{\text{world}} = \mathbf{I}$).
+2. **Re-Zero Yaw**:
+   - Compiles heading drift around the vertical $Y$ axis without disturbing joint offsets:
+     $$\psi = \text{atan2}(2(w \cdot y + x \cdot z), 1 - 2(y^2 + z^2))$$
+     $$\mathbf{Q}_{\text{re-zero}} = \begin{bmatrix} 0 \\ \sin(-\psi / 2) \\ 0 \\ \cos(-\psi / 2) \end{bmatrix}$$
+   - Rotates all bones to align the chest forward along the viewing axis.
+
+### 8.4 Hierarchical Forward Kinematics
+For each bone in the skeletal hierarchy:
+$$\mathbf{R}_{\text{bone local}} = \mathbf{R}_{\text{parent world}}^{-1} \otimes \mathbf{R}_{\text{child world}}$$
+where $\mathbf{R}_{\text{child world}} = \mathbf{Q}_{\text{re-zero}} \otimes (\mathbf{Q}_{\text{offset}} \otimes \mathbf{Q}_{\text{sensor}})$. If an intermediate or child bone tracker is offline, it inherits its parent's world orientation (local identity) and its mesh is styled in muted slate gray (`#475569`).
+
+### 8.5 60 FPS Jitter Buffer & Latency Measurement
+- **Jitter Buffer**: Stores samples in a 50–100 ms buffer (default: 75 ms) to absorb network transmission jitter.
+- **Slerp Interpolation**: Evaluates poses at $t = t_{\text{now}} - \Delta_{\text{buffer}}$ via spherical linear interpolation (`slerp`) between adjacent samples.
+- **Latency Monitoring**: Measured end-to-end hardware-to-screen latency is computed and displayed live in the UI (target: $< 150\text{ ms}$).
