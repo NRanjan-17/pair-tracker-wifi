@@ -4,7 +4,7 @@ from typing import Optional
 from zeroconf import IPVersion, ServiceInfo, Zeroconf
 from server.config import MDNS_NAME, SERVER_PORT
 
-logger = logging.getLogger("eidon.mdns")
+logger = logging.getLogger("pair.mdns")
 
 class MDNSService:
     def __init__(self, service_name: str = MDNS_NAME, port: int = SERVER_PORT):

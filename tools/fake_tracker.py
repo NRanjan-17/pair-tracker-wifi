@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fake Tracker Simulator for Eidon Tracker WiFi
+Fake Tracker Simulator for Pair Tracker WiFi
 Simulates N autonomous tracker nodes speaking the exact binary and JSON protocol.
 Supports configurable packet loss, clock skew, and disconnect-reconnect ring buffer backfill.
 """
@@ -11,12 +11,16 @@ from collections import deque
 import hashlib
 import json
 import math
+from pathlib import Path
 import random
 import sys
 import time
 from typing import Deque, List, Optional
 import httpx
 import websockets
+
+# Ensure repo root is in python path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server.protocol import (
     FLAG_BACKFILL,
@@ -486,7 +490,7 @@ class SimulatedTracker:
                 break
 
 async def main():
-    parser = argparse.ArgumentParser(description="Eidon Fake Tracker Simulator")
+    parser = argparse.ArgumentParser(description="Pair Fake Tracker Simulator")
     parser.add_argument("--server", default="http://localhost:8000", help="Server base URL")
     parser.add_argument(
         "--roles",

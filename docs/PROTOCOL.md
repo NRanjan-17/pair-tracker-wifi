@@ -1,4 +1,4 @@
-# Eidon Tracker WiFi — Protocol Specification
+# Pair Tracker WiFi — Protocol Specification
 
 Version: `1.0.0`  
 Status: **Proposed**
@@ -7,9 +7,9 @@ Status: **Proposed**
 
 ## 1. Overview & Architecture
 
-The **eidon-tracker-wifi** system is an end-to-end IMU body tracking infrastructure composed of:
+The **pair-tracker-wifi** system is an end-to-end IMU body tracking infrastructure composed of:
 1. **ESP32-C6 WiFi Trackers**: Autonomous wearable sensor nodes running FreeRTOS and Arduino framework with Seeed Studio XIAO ESP32-C6 and BNO085 IMU.
-2. **Local Eidon Server**: High-throughput FastAPI / Uvicorn server providing mDNS discovery (`eidon.local`), device registration/announcement, low-latency binary WebSocket ingestion, real-time live streaming fan-out, sequence-gap loss accounting, and Parquet dataset export.
+2. **Local Pair Server**: High-throughput FastAPI / Uvicorn server providing mDNS discovery (`pair.local`), device registration/announcement, low-latency binary WebSocket ingestion, real-time live streaming fan-out, sequence-gap loss accounting, and Parquet dataset export.
 
 ```
 +-----------------------------------------------------------+
@@ -25,14 +25,14 @@ The **eidon-tracker-wifi** system is an end-to-end IMU body tracking infrastruct
 +--------|---------------------------------------------|----+
          |                                             |
          | 1. WiFi Station 2.4 GHz                     |
-         | 2. mDNS discovery (eidon.local)             |
+         | 2. mDNS discovery (pair.local)              |
          | 3. POST /v1/devices/announce                |
          | 4. WS /v1/devices/{id}/stream (Bearer token)|
          v                                             |
 +------------------------------------------------------|----+
 |                       Local Server                   |    |
 |                                                      |    |
-|  FastAPI / Uvicorn (eidon.local:8000)                |    |
+|  FastAPI / Uvicorn (pair.local:8000)                 |    |
 |  - REST API & Health Check                           |    |
 |  - WebSocket Ingest (/v1/devices/{id}/stream)        |    |
 |  - Clock Sync (NTP-style RTT ping-pong) ------------>+    |
@@ -256,7 +256,7 @@ The server triggers periodic clock synchronization (e.g. every 15 seconds):
 ## 5. REST API Specification
 
 ### Authentication
-- **Admin Endpoints**: Require HTTP Header `Authorization: Bearer <ADMIN_TOKEN>`. The admin token is read from server environment variable `EIDON_ADMIN_TOKEN` (default: `eidon_admin_secret`).
+- **Admin Endpoints**: Require HTTP Header `Authorization: Bearer <ADMIN_TOKEN>`. The admin token is read from server environment variable `PAIR_ADMIN_TOKEN` (default: `pair_admin_secret`).
 - **Device Endpoints**: Require HTTP Header `Authorization: Bearer <DEVICE_TOKEN>` or query parameter `?token=<DEVICE_TOKEN>`.
 
 ---
@@ -636,7 +636,7 @@ The firmware operates two dedicated FreeRTOS tasks to guarantee IMU read regular
    - **Never blocks on network or WiFi operations.**
 2. **Network Task (Core 1 / Priority 3)**:
    - Manages WiFi connection with exponential backoff (`1s`, `2s`, `4s`, max `30s`).
-   - Resolves `eidon.local` via mDNS (fallback to configured IP/host).
+   - Resolves `pair.local` via mDNS (fallback to configured IP/host).
    - Performs `POST /v1/devices/announce`.
    - Maintains WebSocket connection `/v1/devices/{id}/stream`.
    - Flushes ring buffer with `flags bit 1 (backfill) = 1` upon reconnect.

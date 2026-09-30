@@ -101,8 +101,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <body>
   <div class="header">
     <div>
-      <h1>Eidon Tracker WiFi</h1>
-      <small style="color: var(--text-muted);">Real-time IMU Body Tracking Hub &bull; mDNS: eidon.local</small>
+      <h1>Pair Tracker WiFi</h1>
+      <small style="color: var(--text-muted);">Real-time IMU Body Tracking Hub &bull; mDNS: pair.local</small>
     </div>
     <div id="connectionStatus" class="status-badge">Connecting WebSocket...</div>
   </div>
@@ -165,7 +165,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   <script>
     let activeSession = null;
-    const adminToken = "eidon_admin_secret";
+    const adminToken = "pair_admin_secret";
 
     async function fetchDevices() {
       try {

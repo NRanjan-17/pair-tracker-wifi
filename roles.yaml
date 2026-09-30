@@ -1,4 +1,4 @@
-# Eidon Tracker WiFi - Body Roles Definition
+# Pair Tracker WiFi - Body Roles Definition
 # Wire format: role is encoded as a uint8 (0-255).
 # 0 is reserved for UNASSIGNED.
 

@@ -1,12 +1,12 @@
-# Eidon Tracker WiFi — Over-The-Air (OTA) Firmware Updates
+# Pair Tracker WiFi — Over-The-Air (OTA) Firmware Updates
 
-This document describes the design, partition layout, bootloader rollback mechanism, server architecture, and real-device verification procedures for Over-The-Air (OTA) firmware updates in the Eidon Tracker ecosystem.
+This document describes the design, partition layout, bootloader rollback mechanism, server architecture, and real-device verification procedures for Over-The-Air (OTA) firmware updates in the Pair Tracker ecosystem.
 
 ---
 
 ## 1. Two-Slot OTA Partition Table
 
-The ESP32-C6 has 4MB (0x400000 bytes) of onboard SPI NOR flash. To support robust failsafe OTA updates without risk of bricking devices, the tracker uses a two-slot OTA partition table defined in [`firmware/partitions_two_ota.csv`](file:///Users/nalinishranjan/Desktop/eidon-tracker-wifi/firmware/partitions_two_ota.csv).
+The ESP32-C6 has 4MB (0x400000 bytes) of onboard SPI NOR flash. To support robust failsafe OTA updates without risk of bricking devices, the tracker uses a two-slot OTA partition table defined in [`firmware/partitions_two_ota.csv`](file:///Users/nalinishranjan/Desktop/pair-tracker-wifi/firmware/partitions_two_ota.csv).
 
 ### Partition Layout
 

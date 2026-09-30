@@ -11,7 +11,7 @@ bool TrackerConfig::begin() {
     prefs.begin(PREFS_NAMESPACE, false);
     ssid = prefs.getString("ssid", "");
     password = prefs.getString("pass", "");
-    serverHost = prefs.getString("server", "eidon.local");
+    serverHost = prefs.getString("server", "pair.local");
     serverPort = prefs.getUShort("port", 8000);
     deviceToken = prefs.getString("token", "");
     role = static_cast<TrackerRole>(prefs.getUChar("role", 0));
@@ -60,7 +60,7 @@ void TrackerConfig::setRole(TrackerRole val) {
 }
 
 void TrackerConfig::printSettings() const {
-    Serial.println("--- Current Eidon Tracker Settings ---");
+    Serial.println("--- Current Pair Tracker Settings ---");
     Serial.printf("SSID:        %s\n", ssid.c_str());
     Serial.printf("Password:    %s\n", password.length() > 0 ? "********" : "(empty)");
     Serial.printf("Server Host: %s\n", serverHost.c_str());

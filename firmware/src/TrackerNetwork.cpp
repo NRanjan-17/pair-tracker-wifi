@@ -79,12 +79,15 @@ bool TrackerNetwork::connectWiFi() {
 }
 
 bool TrackerNetwork::discoverServer() {
-    Serial.println("mDNS: Resolving 'eidon.local'...");
-    if (MDNS.begin("eidon-node")) {
-        IPAddress serverIp = MDNS.queryHost("eidon", 2000);
+    Serial.println("mDNS: Resolving 'pair.local' (or 'eidon.local')...");
+    if (MDNS.begin("pair-node")) {
+        IPAddress serverIp = MDNS.queryHost("pair", 2000);
+        if (serverIp == INADDR_NONE) {
+            serverIp = MDNS.queryHost("eidon", 1000);
+        }
         if (serverIp != INADDR_NONE) {
             resolvedHost = serverIp.toString();
-            Serial.printf("mDNS: Discovered 'eidon.local' at %s\n", resolvedHost.c_str());
+            Serial.printf("mDNS: Discovered server at %s\n", resolvedHost.c_str());
             return true;
         }
     }

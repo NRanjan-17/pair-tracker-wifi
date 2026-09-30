@@ -10,12 +10,14 @@ SESSIONS_DIR = Path(os.getenv("SESSIONS_DIR", BASE_DIR / "sessions_data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-SQLITE_DB_PATH = Path(os.getenv("SQLITE_DB_PATH", DATA_DIR / "eidon.db"))
+DEFAULT_DB = DATA_DIR / "pair.db" if not (DATA_DIR / "eidon.db").exists() else (DATA_DIR / "eidon.db")
+SQLITE_DB_PATH = Path(os.getenv("SQLITE_DB_PATH", DEFAULT_DB))
 
 # Server Network Settings
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
-MDNS_NAME = os.getenv("MDNS_NAME", "eidon")
+MDNS_NAME = os.getenv("MDNS_NAME", "pair")
 
 # Auth Settings
-ADMIN_TOKEN = os.getenv("EIDON_ADMIN_TOKEN", "eidon_admin_secret")
+ADMIN_TOKEN = os.getenv("PAIR_ADMIN_TOKEN", os.getenv("EIDON_ADMIN_TOKEN", "pair_admin_secret"))
+

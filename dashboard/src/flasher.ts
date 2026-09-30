@@ -29,7 +29,7 @@ export class TrackerFlasher {
 
   public async start(config: FlashConfig) {
     this.isCancelled = false;
-    const adminToken = config.adminToken || 'eidon_admin_secret';
+    const adminToken = config.adminToken || 'pair_admin_secret';
 
     if (!('serial' in navigator)) {
       throw new Error(

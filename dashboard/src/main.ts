@@ -5,7 +5,7 @@ import { PlaybackController, SessionDataResponse } from './playback';
 import { TrackerFlasher } from './flasher';
 
 // Admin token for session controls
-const ADMIN_TOKEN = 'eidon_admin_secret';
+const ADMIN_TOKEN = 'pair_admin_secret';
 
 class DashboardApp {
   private visualizer!: ThreeVisualizer;
@@ -1022,7 +1022,7 @@ class DashboardApp {
 
       const ssid = ssidInput ? ssidInput.value.trim() : '';
       const pass = passInput ? passInput.value : '';
-      const host = hostInput ? hostInput.value.trim() || 'eidon.local' : 'eidon.local';
+      const host = hostInput ? hostInput.value.trim() || 'pair.local' : 'pair.local';
       const port = portInput ? parseInt(portInput.value || '8000', 10) : 8000;
       const token = tokenInput ? tokenInput.value.trim() : '';
 
