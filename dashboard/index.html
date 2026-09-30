@@ -47,6 +47,7 @@
           <div class="panel-tabs">
             <button id="tabTrackers" class="tab-btn active">📡 Live Trackers</button>
             <button id="tabSessions" class="tab-btn">📁 Recorded Sessions (<span id="sessionCountBadge">0</span>)</button>
+            <button id="tabFlash" class="tab-btn">⚡ Flash & Provision</button>
           </div>
 
           <!-- Tab View 1: Live Trackers -->
@@ -77,6 +78,109 @@
             <p class="panel-desc">Parquet recordings stored on disk. Click Play to scrub in the 3D viewport.</p>
             <div id="sessionsListContainer" class="sessions-list">
               <div class="empty-sessions">No recorded sessions found. Press <strong>REC</strong> to capture your first session.</div>
+            </div>
+          </div>
+
+          <!-- Tab View 3: Flash & Provision -->
+          <div id="viewFlash" class="tab-content" style="display: none;">
+            <div class="panel-header">
+              <h2>Flash & Provision</h2>
+              <span class="badge badge-connected" style="background: rgba(56, 189, 248, 0.15); color: var(--accent); border-color: rgba(56, 189, 248, 0.4);">Web Serial</span>
+            </div>
+            <p class="panel-desc">Flash compiled firmware binaries and configure tracker role and WiFi credentials over Web Serial.</p>
+
+            <div class="flash-notice-banner">
+              ℹ️ <strong>Browser Requirement:</strong> Web Serial is supported in <strong>Google Chrome</strong> and <strong>Microsoft Edge</strong> on <code>localhost</code> or over HTTPS.
+            </div>
+
+            <!-- Provisioning Config Form -->
+            <form id="flashForm" class="flash-config-form" onsubmit="return false;">
+              <div class="form-group">
+                <label for="flashRoleSelect">Body Tracker Role <span style="color: var(--danger);">*</span></label>
+                <select id="flashRoleSelect" class="form-select">
+                  <!-- Populated dynamically -->
+                </select>
+                <span class="form-tip">Role is saved to ESP32 NVS flash and bound to this device.</span>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="flashSsid">WiFi SSID <span style="color: var(--danger);">*</span></label>
+                  <input type="text" id="flashSsid" class="form-input" placeholder="e.g. MyWiFi" required />
+                </div>
+                <div class="form-group flex-1">
+                  <label for="flashPassword">WiFi Password</label>
+                  <input type="password" id="flashPassword" class="form-input" placeholder="Password" />
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="flashServerHost">Server Host</label>
+                  <input type="text" id="flashServerHost" class="form-input" value="eidon.local" />
+                </div>
+                <div class="form-group flex-1">
+                  <label for="flashServerPort">Server Port</label>
+                  <input type="number" id="flashServerPort" class="form-input" value="8000" />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="flashToken">Device Token</label>
+                <input type="text" id="flashToken" class="form-input" placeholder="Leave blank to auto-generate" />
+              </div>
+
+              <div class="form-actions">
+                <button type="button" id="btnStartFlash" class="btn btn-primary btn-flash-submit">
+                  ⚡ Connect, Flash & Provision
+                </button>
+              </div>
+            </form>
+
+            <!-- Stepper Progress & Live Console -->
+            <div id="flashStatusSection" class="flash-status-section" style="display: none;">
+              <div class="stepper-box">
+                <div id="stepItem1" class="step-row pending"><span class="step-num">1</span> Connect & Detect Chip (Web Serial)</div>
+                <div id="stepItem2" class="step-row pending"><span class="step-num">2</span> Register Role on Hub</div>
+                <div id="stepItem3" class="step-row pending"><span class="step-num">3</span> Fetch Firmware Binaries</div>
+                <div id="stepItem4" class="step-row pending"><span class="step-num">4</span> Flash ESP32-C6 (esptool-js)</div>
+                <div id="stepItem5" class="step-row pending"><span class="step-num">5</span> Send Provisioning Commands</div>
+                <div id="stepItem6" class="step-row pending"><span class="step-num">6</span> Announce & Verify Online</div>
+              </div>
+
+              <div class="flash-progress-bar-container">
+                <div id="flashProgressBarFill" class="flash-progress-bar-fill" style="width: 0%;"></div>
+              </div>
+              <div id="flashProgressText" class="flash-progress-text">Ready to connect</div>
+
+              <!-- Switch ON tracker prompt -->
+              <div id="switchOnTrackerCard" class="switch-on-card" style="display: none;">
+                <div class="switch-on-icon">🔌</div>
+                <div class="switch-on-content">
+                  <h4>Switch ON the tracker</h4>
+                  <p>Turn on power or disconnect USB. The tracker is connecting to WiFi and announcing to the Eidon Hub...</p>
+                  <div class="spinner-inline"></div>
+                </div>
+              </div>
+
+              <!-- Green Success Card -->
+              <div id="flashSuccessCard" class="flash-success-card" style="display: none;">
+                <div class="flash-success-icon">✓</div>
+                <div class="flash-success-body">
+                  <h4>Tracker Online & Ready!</h4>
+                  <p id="flashSuccessMessage">Device announced and streaming live IMU quaternions.</p>
+                  <button id="btnViewOnlineAvatar" class="btn btn-primary btn-sm">Go to Live Avatar →</button>
+                </div>
+              </div>
+
+              <!-- Flashing Console Terminal -->
+              <div class="flash-console-wrapper">
+                <div class="flash-console-header">
+                  <span>Serial Flashing Console</span>
+                  <button id="btnClearFlashLog" class="btn btn-secondary btn-sm">Clear</button>
+                </div>
+                <pre id="flashConsoleLog" class="flash-console-log"></pre>
+              </div>
             </div>
           </div>
         </section>

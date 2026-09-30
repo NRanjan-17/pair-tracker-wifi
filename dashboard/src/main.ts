@@ -2,6 +2,7 @@ import './style.css';
 import { ThreeVisualizer } from './three_view';
 import { DeviceState, InitMessage, SampleMessage, SessionInfo } from './types';
 import { PlaybackController, SessionDataResponse } from './playback';
+import { TrackerFlasher } from './flasher';
 
 // Admin token for session controls
 const ADMIN_TOKEN = 'eidon_admin_secret';
@@ -9,6 +10,7 @@ const ADMIN_TOKEN = 'eidon_admin_secret';
 class DashboardApp {
   private visualizer!: ThreeVisualizer;
   private playback!: PlaybackController;
+  private flasher: TrackerFlasher | null = null;
   private ws: WebSocket | null = null;
   private requiredRoles: string[] = [];
   private devices: Map<string, DeviceState> = new Map(); // device_id -> DeviceState
@@ -118,23 +120,42 @@ class DashboardApp {
     // Tab buttons
     const tabTrackers = document.getElementById('tabTrackers') as HTMLButtonElement;
     const tabSessions = document.getElementById('tabSessions') as HTMLButtonElement;
+    const tabFlash = document.getElementById('tabFlash') as HTMLButtonElement;
     const viewTrackers = document.getElementById('viewTrackers') as HTMLElement;
     const viewSessions = document.getElementById('viewSessions') as HTMLElement;
+    const viewFlash = document.getElementById('viewFlash') as HTMLElement;
 
     tabTrackers.addEventListener('click', () => {
       tabTrackers.classList.add('active');
       tabSessions.classList.remove('active');
+      if (tabFlash) tabFlash.classList.remove('active');
       viewTrackers.style.display = 'flex';
       viewSessions.style.display = 'none';
+      if (viewFlash) viewFlash.style.display = 'none';
     });
 
     tabSessions.addEventListener('click', () => {
       tabSessions.classList.add('active');
       tabTrackers.classList.remove('active');
+      if (tabFlash) tabFlash.classList.remove('active');
       viewSessions.style.display = 'flex';
       viewTrackers.style.display = 'none';
+      if (viewFlash) viewFlash.style.display = 'none';
       this.fetchSessions();
     });
+
+    if (tabFlash) {
+      tabFlash.addEventListener('click', () => {
+        tabFlash.classList.add('active');
+        tabTrackers.classList.remove('active');
+        tabSessions.classList.remove('active');
+        if (viewFlash) viewFlash.style.display = 'flex';
+        viewTrackers.style.display = 'none';
+        viewSessions.style.display = 'none';
+      });
+    }
+
+    this.initFlashUI();
 
     // Refresh sessions list
     const btnRefresh = document.getElementById('btnRefreshSessions');
@@ -674,6 +695,172 @@ class DashboardApp {
     const minStr = String(min).padStart(2, '0');
     const secStr = sec.toFixed(1).padStart(4, '0');
     return `${minStr}:${secStr}`;
+  }
+
+  private initFlashUI() {
+    const roleSelect = document.getElementById('flashRoleSelect') as HTMLSelectElement;
+    const hostInput = document.getElementById('flashServerHost') as HTMLInputElement;
+    const portInput = document.getElementById('flashServerPort') as HTMLInputElement;
+    const btnStartFlash = document.getElementById('btnStartFlash') as HTMLButtonElement;
+    const btnClearLog = document.getElementById('btnClearFlashLog') as HTMLButtonElement;
+    const btnGoAvatar = document.getElementById('btnViewOnlineAvatar') as HTMLButtonElement;
+
+    // Default host & port
+    if (hostInput && window.location.hostname && window.location.hostname !== 'localhost') {
+      hostInput.value = window.location.hostname;
+    }
+    if (portInput && window.location.port) {
+      portInput.value = window.location.port;
+    }
+
+    // Populate roles dropdown
+    const ALL_ROLES = [
+      'chest',
+      'left_shoulder',
+      'right_shoulder',
+      'left_upper_arm',
+      'right_upper_arm',
+      'left_elbow',
+      'right_elbow',
+      'left_forearm',
+      'right_forearm',
+      'left_hand',
+      'right_hand',
+      'left_thigh',
+      'right_thigh',
+      'left_shin',
+      'right_shin',
+      'left_foot',
+      'right_foot',
+    ];
+
+    if (roleSelect) {
+      roleSelect.innerHTML = '';
+      for (const r of ALL_ROLES) {
+        const opt = document.createElement('option');
+        opt.value = r;
+        opt.text = `${r.replace(/_/g, ' ')} (${r})`;
+        roleSelect.appendChild(opt);
+      }
+    }
+
+    if (btnClearLog) {
+      btnClearLog.addEventListener('click', () => {
+        const consoleLog = document.getElementById('flashConsoleLog');
+        if (consoleLog) consoleLog.textContent = '';
+      });
+    }
+
+    if (btnGoAvatar) {
+      btnGoAvatar.addEventListener('click', () => {
+        const tabTrackers = document.getElementById('tabTrackers');
+        if (tabTrackers) tabTrackers.click();
+      });
+    }
+
+    if (!btnStartFlash) return;
+
+    btnStartFlash.addEventListener('click', async () => {
+      const role = roleSelect ? roleSelect.value : 'chest';
+      const ssidInput = document.getElementById('flashSsid') as HTMLInputElement;
+      const passInput = document.getElementById('flashPassword') as HTMLInputElement;
+      const tokenInput = document.getElementById('flashToken') as HTMLInputElement;
+
+      const ssid = ssidInput ? ssidInput.value.trim() : '';
+      const pass = passInput ? passInput.value : '';
+      const host = hostInput ? hostInput.value.trim() || 'eidon.local' : 'eidon.local';
+      const port = portInput ? parseInt(portInput.value || '8000', 10) : 8000;
+      const token = tokenInput ? tokenInput.value.trim() : '';
+
+      if (!ssid) {
+        alert('Please enter your WiFi SSID.');
+        return;
+      }
+
+      const statusSection = document.getElementById('flashStatusSection')!;
+      const consoleLog = document.getElementById('flashConsoleLog')!;
+      const switchOnCard = document.getElementById('switchOnTrackerCard')!;
+      const successCard = document.getElementById('flashSuccessCard')!;
+      const progressFill = document.getElementById('flashProgressBarFill')!;
+      const progressText = document.getElementById('flashProgressText')!;
+
+      statusSection.style.display = 'flex';
+      switchOnCard.style.display = 'none';
+      successCard.style.display = 'none';
+      progressFill.style.width = '0%';
+      progressText.innerText = 'Connecting...';
+      btnStartFlash.disabled = true;
+
+      // Reset stepper status
+      for (let i = 1; i <= 6; i++) {
+        const el = document.getElementById(`stepItem${i}`);
+        if (el) el.className = 'step-row pending';
+      }
+
+      this.flasher = new TrackerFlasher({
+        onStepChange: (stepNum, stepName) => {
+          for (let i = 1; i <= 6; i++) {
+            const el = document.getElementById(`stepItem${i}`);
+            if (el) {
+              if (i < stepNum) el.className = 'step-row done';
+              else if (i === stepNum) el.className = 'step-row active';
+              else el.className = 'step-row pending';
+            }
+          }
+          progressText.innerText = stepName;
+          progressFill.style.width = `${Math.round(((stepNum - 1) / 6) * 100)}%`;
+        },
+        onProgress: (status, pct) => {
+          progressText.innerText = status;
+          progressFill.style.width = `${pct}%`;
+        },
+        onLog: (text) => {
+          consoleLog.textContent += text;
+          consoleLog.scrollTop = consoleLog.scrollHeight;
+        },
+        onSwitchOnPrompt: (mac) => {
+          switchOnCard.style.display = 'flex';
+          const switchText = switchOnCard.querySelector('p');
+          if (switchText) {
+            switchText.innerHTML = `Device <strong>${mac}</strong> flashed! Switch power ON or disconnect USB. Waiting for it to connect to WiFi and announce...`;
+          }
+        },
+        onSuccess: (mac, provisionedRole) => {
+          for (let i = 1; i <= 6; i++) {
+            const el = document.getElementById(`stepItem${i}`);
+            if (el) el.className = 'step-row done';
+          }
+          progressFill.style.width = '100%';
+          progressText.innerText = 'Provisioning & Connection Complete!';
+          switchOnCard.style.display = 'none';
+          successCard.style.display = 'flex';
+          const msgEl = document.getElementById('flashSuccessMessage');
+          if (msgEl) {
+            msgEl.innerHTML = `Device <strong>${mac}</strong> announced as <strong>${provisionedRole}</strong> and is online!`;
+          }
+          btnStartFlash.disabled = false;
+        },
+        onError: (err) => {
+          btnStartFlash.disabled = false;
+          progressText.innerText = `Error: ${err.message}`;
+          alert(`Flashing / Provisioning Error: ${err.message}`);
+        },
+      });
+
+      try {
+        await this.flasher.start({
+          role,
+          ssid,
+          password: pass,
+          serverHost: host,
+          serverPort: port,
+          token: token || undefined,
+          adminToken: ADMIN_TOKEN,
+        });
+      } catch (err: any) {
+        btnStartFlash.disabled = false;
+      }
+    });
   }
 
   private startPeriodicUpdates() {

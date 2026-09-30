@@ -657,6 +657,44 @@ reboot
 ```
 All parameters are stored in ESP32 NVS under namespace `eidon_cfg`. No secrets are kept in source code.
 
+### 7.3 Web Serial Flashing & Browser Provisioning (`esptool-js`)
+
+The web dashboard provides an in-browser **Flash & Provision** tool using `esptool-js` over the Web Serial API.
+
+#### Browser & Environment Compatibility
+- **Supported Browsers**: Google Chrome, Microsoft Edge, and Chromium-based browsers supporting the Web Serial API (`navigator.serial`).
+- **Origin Security**: Web Serial is strictly restricted by browser security policies to `localhost` or secure HTTPS origins (`https://...`).
+
+#### Workflow Sequence
+1. **Role & Network Selection**: Operator selects the tracker's body role from the list of valid roles, and inputs local WiFi credentials and server endpoint.
+2. **Device Detection & Registration**:
+   - The browser prompts for the Seeed XIAO ESP32-C6 USB serial port.
+   - `esptool-js` syncs with the ROM bootloader, identifies the chip, and reads the factory MAC address from eFuse.
+   - The frontend calls `POST /v1/devices/register` with `{ device_id: MAC, role: role }`. The server returns the assigned per-device bearer token.
+3. **Binary Flashing**:
+   - Frontend requests `GET /v1/firmware/manifest` to retrieve the ESP32-C6 flash partition layout (`bootloader.bin` @ `0x0`, `partitions.bin` @ `0x8000`, `boot_app0.bin` @ `0xe000`, `firmware.bin` @ `0x10000`).
+   - Downloads each binary via `GET /v1/firmware/{filename}` and writes to flash via `esploader.writeFlash()`.
+   - Issues a hard reset command.
+4. **NVS Provisioning**:
+   - Re-opens serial communication at 115200 baud.
+   - Sends the line protocol CLI commands:
+     `set ssid <SSID>`
+     `set pass <PASSWORD>`
+     `set server <HOST>`
+     `set port <PORT>`
+     `set token <TOKEN>`
+     `set role <ROLE>`
+     `show`
+     `reboot`
+5. **Switch ON Tracker & Announce Verification**:
+   - UI prompts: *"Switch ON the tracker"*.
+   - Tracker boots, initializes IMU, connects to WiFi, and performs `POST /v1/devices/announce`.
+   - The dashboard detects the incoming announcement and highlights a bright green success confirmation.
+
+> **Note on OTA (Over-The-Air)**:  
+> OTA firmware updating is currently **out of scope** for this milestone.  
+> *TODO: Implement WiFi-based OTA updates (`POST /v1/firmware/ota` and tracker background pull) in a future milestone.*
+
 ---
 
 ## 8. 3D Biomechanical Avatar & Kinematics Engine

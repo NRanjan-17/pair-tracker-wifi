@@ -1,4 +1,4 @@
-.PHONY: help install test run-server run-fake clean pio-build build-dashboard verify-dashboard
+.PHONY: help install test run-server run-fake clean pio-build firmware-bin build-dashboard verify-dashboard
 
 help:
 	@echo "Available commands:"
@@ -9,6 +9,7 @@ help:
 	@echo "  make run-server      Start local FastAPI server on port 8000"
 	@echo "  make run-fake        Run fake tracker simulation"
 	@echo "  make pio-build       Build PlatformIO firmware"
+	@echo "  make firmware-bin    Build firmware and copy binaries into server/firmware_bin"
 	@echo "  make clean           Remove temporary files"
 
 install:
@@ -32,6 +33,16 @@ run-fake:
 
 pio-build:
 	cd firmware && . ../.venv/bin/activate && pio run
+
+firmware-bin: pio-build
+	mkdir -p server/firmware_bin
+	cp firmware/.pio/build/seeed_xiao_esp32c6/bootloader.bin server/firmware_bin/
+	cp firmware/.pio/build/seeed_xiao_esp32c6/partitions.bin server/firmware_bin/
+	cp firmware/.pio/build/seeed_xiao_esp32c6/firmware.bin server/firmware_bin/
+	@if [ -f ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin ]; then \
+		cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin server/firmware_bin/ ; \
+	fi
+	@echo "Firmware binaries copied to server/firmware_bin/"
 
 clean:
 	rm -rf .pytest_cache __pycache__ server/__pycache__ tools/__pycache__ tests/__pycache__

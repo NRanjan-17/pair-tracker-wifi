@@ -87,7 +87,7 @@ def verify_device_auth(device_id: str, token: str) -> bool:
 class DeviceRegisterRequest(BaseModel):
     device_id: str = Field(..., description="Device MAC address or unique ID")
     role: str = Field(..., description="Body role identifier")
-    token: str = Field(..., description="Per-device authentication token")
+    token: Optional[str] = Field(None, description="Per-device authentication token (generated if omitted)")
     notes: Optional[str] = Field("", description="Optional notes or placement details")
 
 class DeviceAnnounceRequest(BaseModel):
@@ -107,6 +107,7 @@ class DeviceCommandRequest(BaseModel):
 
 DASHBOARD_DIST_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "dist"
 DASHBOARD_ASSETS_DIR = DASHBOARD_DIST_DIR / "assets"
+FIRMWARE_BIN_DIR = Path(__file__).resolve().parent / "firmware_bin"
 
 # REST Endpoints
 @app.get("/")
@@ -122,6 +123,43 @@ async def get_dashboard_asset(asset_path: str):
     if asset_file.exists() and asset_file.is_file():
         return FileResponse(asset_file)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+
+# Firmware & Web Serial Flashing Endpoints
+# TODO: OTA (Over-The-Air) firmware update is out of scope for current milestone.
+# Future milestone will implement POST /v1/firmware/ota to trigger self-update over WiFi.
+
+@app.get("/v1/firmware/manifest")
+async def get_firmware_manifest():
+    """
+    Returns ESP32-C6 flash partition offsets and paths for Web Serial esptool-js flashing.
+    """
+    manifest_parts = [
+        {"name": "bootloader.bin", "offset": 0, "path": "/v1/firmware/bootloader.bin"},
+        {"name": "partitions.bin", "offset": 32768, "path": "/v1/firmware/partitions.bin"}, # 0x8000
+        {"name": "boot_app0.bin", "offset": 57344, "path": "/v1/firmware/boot_app0.bin"},   # 0xe000
+        {"name": "firmware.bin", "offset": 65536, "path": "/v1/firmware/firmware.bin"},     # 0x10000
+    ]
+    available = []
+    for part in manifest_parts:
+        file_path = FIRMWARE_BIN_DIR / part["name"]
+        if file_path.exists():
+            part["size"] = file_path.stat().st_size
+            available.append(part)
+
+    return {
+        "chip": "esp32c6",
+        "board": "seeed_xiao_esp32c6",
+        "version": "1.0.0",
+        "parts": available,
+    }
+
+@app.get("/v1/firmware/{filename}")
+async def get_firmware_binary(filename: str):
+    safe_name = Path(filename).name
+    file_path = FIRMWARE_BIN_DIR / safe_name
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Firmware binary not found")
+    return FileResponse(file_path, media_type="application/octet-stream", filename=safe_name)
 
 @app.get("/healthz")
 async def healthz():
@@ -143,10 +181,12 @@ async def register_device(
             detail=f"Invalid role '{payload.role}'. Must be one of valid roles.",
         )
 
+    # Use supplied token or auto-generate secure token
+    token = payload.token or f"tok_{uuid.uuid4().hex[:16]}"
     dev = db.register_device(
         device_id=payload.device_id,
         role=payload.role,
-        token=payload.token,
+        token=token,
         notes=payload.notes or "",
     )
     return {
@@ -154,6 +194,7 @@ async def register_device(
         "device_id": dev["device_id"],
         "role": dev["role"],
         "role_id": roles_registry.get_role_id(dev["role"]),
+        "token": dev["token"],
     }
 
 @app.post("/v1/devices/announce")

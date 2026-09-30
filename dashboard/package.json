@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "esptool-js": "^0.7.0",
     "three": "^0.170.0"
   },
   "devDependencies": {

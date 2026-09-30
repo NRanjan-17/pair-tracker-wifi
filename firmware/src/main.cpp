@@ -12,6 +12,10 @@
 #include "SerialCLI.h"
 #include "Version.h"
 
+// TODO: OTA (Over-The-Air) firmware update via WiFi is out of scope for current milestone.
+// Initial tracker flashing and role/credential provisioning is performed over Web Serial (USB)
+// using esptool-js and SerialCLI line protocol. Future milestone will add ArduinoOTA/HTTPUpdate support.
+
 // Queue between Sensor Task and Network Task
 static QueueHandle_t frameQueue = nullptr;
 
