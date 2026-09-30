@@ -26,6 +26,8 @@ To build a full 7-node body motion capture tracking set, you will need 7 individ
 
 All pin definitions are confirmed against [`firmware/src/Hardware.h`](../firmware/src/Hardware.h) and [`firmware/src/IMUManager.cpp`](../firmware/src/IMUManager.cpp).
 
+### 2.1 Primary Target: Seeed Studio XIAO ESP32-C6 Pinout
+
 | XIAO ESP32-C6 Pin | GPIO | BNO085 Pin | Signal Type | Function & Behavior |
 |:---|:---:|:---:|:---|:---|
 | **3V3** | — | **VCC / VIN** | Power (3.3V) | Clean 3.3V regulated power from onboard LDO |
@@ -37,17 +39,46 @@ All pin definitions are confirmed against [`firmware/src/Hardware.h`](../firmwar
 | **User LED** | **GPIO 15** | *(Onboard)* | Status Output | System status & identify indicator LED |
 | *(None)* | — | **INT / RST** | Unused | Soft-reset over I2C; hardware interrupt not required |
 
+### 2.2 Secondary Target: ESP-12E (ESP8266 / NodeMCU v2) Pinout
+
+The ESP-12E runs at 160 MHz with 4 MB flash (4M1M layout with LittleFS). Serial CLI operates at **9600 bps** (silkscreened on board).
+
+#### I2C Mode (Default: `-DIMU_BUS=1`)
+*Operating frequency: 100 kHz standard mode with clock stretching.*
+
+| NodeMCU Pin | ESP-12E GPIO | BNO085 Pin | Function & Notes |
+|:---|:---:|:---:|:---|
+| **3V3** | — | **VIN** | 3.3V power |
+| **GND** | — | **GND** | Ground |
+| **D2** | **GPIO 4** | **SDA** | I2C Data (configurable in `boards/esp12e.h`) |
+| **D1** | **GPIO 5** | **SCL** | I2C Clock (configurable in `boards/esp12e.h`) |
+| **3V3** | — | **DI / AD0** | Tie to 3.3V for address `0x4B` (or GND for `0x4A`) |
+| **D4** | **GPIO 2** | *(Onboard)* | Built-in LED (Active LOW). Pulled HIGH internally at boot. |
+| **A0** | **ADC0** | Battery | Analog input (0–1.0V native; NodeMCU board scales 0–3.3V). Requires external divider for 1S LiPo (3.0–4.2V). |
+
+#### SPI Mode (Alternative: `-DIMU_BUS=2`)
+*Hardware SPI at 1 MHz to 3 MHz.*
+
+| NodeMCU Pin | ESP-12E GPIO | BNO085 Pin | Notes |
+|:---|:---:|:---:|:---|
+| **D5** | **GPIO 14** | **SCK** | SPI Clock |
+| **D6** | **GPIO 12** | **MISO / SDO** | SPI Master In / Slave Out |
+| **D7** | **GPIO 13** | **MOSI / SDI** | SPI Master Out / Slave In |
+| **D2** | **GPIO 4** | **CS** | Chip Select (Active LOW) |
+| **D1** | **GPIO 5** | **INT** | Data Ready Interrupt |
+| **D0** | **GPIO 16** | **RST** | Reset pin (Active LOW) |
+| **3V3** | — | **PS1** | Solder bridge / pull HIGH to select SPI mode on BNO085 breakout |
+
+> [!WARNING]
+> **ESP8266 Strapping & Boot Pin Hazards:**
+> - **GPIO 0 (D3):** Must be pulled HIGH for normal flash boot. Pulling LOW enters UART download mode.
+> - **GPIO 2 (D4):** Must be pulled HIGH during boot. Must NOT be pulled LOW externally at reset. Connected to onboard LED.
+> - **GPIO 15 (D8):** Must be pulled LOW during boot. Must NOT be pulled HIGH externally at reset.
+> - **GPIO 16 (D0):** Has no hardware interrupt support in older frameworks and is tied to RTC deep sleep wake. Avoid for IMU INT.
+
 > [!NOTE]
 > **I2C Address Selection (`0x4B`):**
-> The BNO085 default address is `0x4A` when `DI / AD0` is tied to ground, and `0x4B` when pulled HIGH. In [`firmware/src/IMUManager.cpp`](../firmware/src/IMUManager.cpp), GPIO 18 (`D10`) is initialized as an output and driven `HIGH` before initializing the I2C bus:
-> ```cpp
-> pinMode(I2C_ADR_PIN, OUTPUT);
-> digitalWrite(I2C_ADR_PIN, HIGH);
-> delay(10);
-> Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, 400000);
-> bno08x.begin_I2C(0x4B, &Wire);
-> ```
-> This ensures consistent detection across all breakout boards without requiring solder jumpers.
+> The BNO085 default address is `0x4A` when `DI / AD0` is tied to ground, and `0x4B` when pulled HIGH. On ESP32-C6, GPIO 18 (`D10`) is driven `HIGH` on boot. On ESP-12E, tie `DI / AD0` directly to `3V3` or let the firmware detect on `0x4A`/`0x4B`.
 
 ---
 
@@ -150,13 +181,14 @@ $$\text{Percentage} = \frac{\text{Measured mV} - 3000}{4200 - 3000} \times 100\%
 
 ## 5. Status LED Patterns
 
-The Seeed Studio XIAO ESP32-C6 user LED is connected to **GPIO 15**. The firmware updates the LED according to network and command states:
+The status LED is assigned per board: **GPIO 15** on Seeed Studio XIAO ESP32-C6 (active HIGH) and **GPIO 2** on ESP-12E / NodeMCU (active LOW). The firmware automatically handles polarity:
 
 | LED Pattern | Meaning | Technical State |
 |:---|:---|:---|
-| **OFF** | **Disconnected / Unpowered** | Device is powered off, booting, or attempting to join WiFi / resolving mDNS. |
-| **SOLID ON** | **Connected & Streaming** | WiFi connected and WebSocket stream established with the server (`/v1/devices/{mac}/stream`). Active orientations streaming at 48 Hz. |
-| **FAST BLINK** (~3.3 Hz, 150 ms toggle) | **Identify Command** | Triggered by clicking the **Blink** button on the dashboard card. Blinks for 3000 ms, then returns to previous connection state. |
+| **Heartbeat Pulse (100 ms pulse every 2 s)** | **Connected to WiFi & Server** | WiFi connected and WebSocket stream established (`/v1/devices/{mac}/stream`). Active streaming at 48 Hz. |
+| **Rapid Continuous Blink (200 ms ON / 200 ms OFF)** | **Disconnected / Searching** | Disconnected from WiFi or waiting for server WebSocket connection. |
+| **High-Speed Strobe (10 Hz, 50 ms toggle)** | **Identify Command** | Triggered by clicking the **Blink** button on the dashboard card. Flashes for 3000 ms, then resumes background state. |
+| **OFF** | **Unpowered** | Device is powered off via physical slide switch or battery is completely depleted. |
 
 ---
 

@@ -1,14 +1,14 @@
 #pragma once
 
 #include <Arduino.h>
-#include <Preferences.h>
 #include "Roles.h"
+#include "../hal/Storage.h"
 
 class TrackerConfig {
 public:
     TrackerConfig();
     bool begin();
-    
+
     // Getters
     String getSSID() const;
     String getPassword() const;
@@ -29,7 +29,6 @@ public:
     void printSettings() const;
 
 private:
-    Preferences prefs;
     String ssid;
     String password;
     String serverHost;

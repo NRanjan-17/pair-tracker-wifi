@@ -21,6 +21,9 @@ export interface DeviceState {
   role: string;
   role_id: number;
   online: boolean;
+  hw?: string;
+  flash_size?: number;
+  free_heap?: number;
   firmware_version?: string;
   protocol_version?: number;
   protocol_outdated?: boolean;

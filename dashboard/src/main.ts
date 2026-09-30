@@ -393,11 +393,15 @@ class DashboardApp {
       const hasActiveOta = job && ['queued', 'downloading', 'verifying', 'rebooting'].includes(job.status);
       const isBatteryLow = isOnline && dev && dev.battery_pct !== null && dev.battery_pct < 30;
 
+      const heap = isOnline && dev && dev.free_heap ? `${Math.round(dev.free_heap / 1024)} KB` : '—';
+      const hwName = (dev?.hw || 'esp32c6').toUpperCase();
+
       card.innerHTML = `
         <div class="card-top">
           <div class="role-title">
             <span>${displayName}</span>
             <span class="role-tag-badge">${role}</span>
+            <span class="role-tag-badge hw-badge" style="background: ${dev?.hw === 'esp12e' ? '#38bdf8' : '#818cf8'}; color: #0f172a; font-weight: 700; margin-left: 4px;">${hwName}</span>
           </div>
           <span class="status-indicator ${statusClass}">${statusText}</span>
         </div>
@@ -405,6 +409,10 @@ class DashboardApp {
           <div class="metric-col">
             <span class="metric-lbl">Battery</span>
             <span class="metric-val" id="batt-${role}">${batt}</span>
+          </div>
+          <div class="metric-col">
+            <span class="metric-lbl">Heap</span>
+            <span class="metric-val" id="heap-${role}">${heap}</span>
           </div>
           <div class="metric-col">
             <span class="metric-lbl">Loss</span>

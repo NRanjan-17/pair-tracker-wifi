@@ -16,6 +16,7 @@ os.environ["SESSIONS_DIR"] = tempfile.mkdtemp()
 os.environ["SQLITE_DB_PATH"] = str(Path(os.environ["DATA_DIR"]) / "test_ota.db")
 os.environ["EIDON_ADMIN_TOKEN"] = "test_admin_secret"
 
+import shutil
 from server.config import ADMIN_TOKEN
 from server.db import db
 from server.main import app, FIRMWARE_BIN_DIR
@@ -24,9 +25,13 @@ from tools.fake_tracker import SimulatedTracker
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_firmware_release():
-    """Ensure a release exists in server/firmware_bin/1.0.0"""
+    """Ensure a release exists for tests"""
     release_dir = FIRMWARE_BIN_DIR / "1.0.0"
-    release_dir.mkdir(parents=True, exist_ok=True)
+    created_release_dir = False
+    if not release_dir.exists():
+        release_dir.mkdir(parents=True, exist_ok=True)
+        created_release_dir = True
+
     bin_file = release_dir / "firmware.bin"
     if not bin_file.exists():
         bin_data = b"\xAA\xBB\xCC\xDD" * 256
@@ -55,6 +60,12 @@ def setup_firmware_release():
         "min_protocol": 1,
     }
     (rel_101 / "manifest.json").write_text(json.dumps(manifest_101, indent=2))
+
+    yield
+
+    shutil.rmtree(rel_101, ignore_errors=True)
+    if created_release_dir:
+        shutil.rmtree(release_dir, ignore_errors=True)
 
 @pytest.mark.anyio
 async def test_ota_manifest_and_download_auth():

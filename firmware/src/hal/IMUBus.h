@@ -2,17 +2,16 @@
 
 #include <Arduino.h>
 #include <Adafruit_BNO08x.h>
-#include <Wire.h>
-#include "Hardware.h"
-#include "Protocol.h"
+#include "../boards/board.h"
+#include "../core/Protocol.h"
 
 #ifndef EIDON_MOUNT_CORRECTION
 #define EIDON_MOUNT_CORRECTION 1
 #endif
 
-class IMUManager {
+class HalIMUBus {
 public:
-    IMUManager();
+    HalIMUBus();
     bool begin();
     bool update();
     bool isAvailable() const;
@@ -36,4 +35,4 @@ private:
     SampleRaw current_raw;
 };
 
-extern IMUManager imuManager;
+extern HalIMUBus imuBus;

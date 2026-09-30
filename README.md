@@ -1,8 +1,8 @@
 # Pair Tracker WiFi
 
-Autonomous, open-source, WiFi-based full-body motion capture (mocap) tracking system built on **Seeed Studio XIAO ESP32-C6** microcontrollers and **BNO085 9-DOF IMUs**.
+Autonomous, open-source, WiFi-based full-body motion capture (mocap) tracking system supporting **Seeed Studio XIAO ESP32-C6** (primary target) and **ESP-12E / NodeMCU ESP8266** (secondary target) microcontrollers with **BNO085 9-DOF IMUs**.
 
-The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 ms latency, automatic zero-configuration server discovery via mDNS (`pair.local`), a real-time Three.js 3D avatar dashboard, one-click N-pose calibration, Parquet session recording, Web Serial USB flashing, fail-safe dual-slot OTA firmware updates, and standard mocap export to BVH, CSV, and Parquet.
+The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 ms latency, automatic zero-configuration server discovery via mDNS (`pair.local`), a real-time Three.js 3D avatar dashboard, one-click N-pose calibration, Parquet session recording, Web Serial USB flashing with auto chip detection, fail-safe dual-slot OTA firmware updates, and standard mocap export to BVH, CSV, and Parquet.
 
 ---
 
@@ -10,10 +10,10 @@ The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 m
 
 ```
  +-------------------------------------------------------------------------------+
- |                           TRACKERS (ESP32-C6 + BNO085)                        |
- |  - BNO085 Game Rotation Vector (48 Hz)                                        |
- |  - FreeRTOS dual-task architecture (Sensor Core 0, Network Core 0)            |
- |  - Synced server clock timestamps, 120-frame disconnect backfill buffer       |
+ |                        TRACKERS (ESP32-C6 / ESP-12E + BNO085)                 |
+ |  - BNO085 Game Rotation Vector (48 Hz) via I2C (100-400 kHz) or SPI           |
+ |  - Dual-core FreeRTOS (ESP32-C6) or non-blocking cooperative loop (ESP-12E)  |
+ |  - Synced server clock timestamps, disconnect backfill ring buffer            |
  +---------------------------------------+---------------------------------------+
                                          |
                                          | 2.4 GHz WiFi (Station Mode)
@@ -25,7 +25,7 @@ The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 m
  |  - mDNS announcement (`pair.local`)                                           |
  |  - High-performance WebSocket binary ingest & sample unbatching               |
  |  - Sequence gap detection & per-device packet loss tracking                   |
- |  - Dual-slot OTA binary distribution & job state machine                      |
+ |  - Multi-target OTA binary distribution & job state machine (esp32c6, esp12e) |
  +-------------------+---------------------------------------+-------------------+
                      |                                       |
                      | WebSocket fan-out                     | Parquet writer
@@ -54,14 +54,17 @@ The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 m
 
 | Feature | Status | Notes |
 |:---|:---:|:---|
+| **Primary Target (ESP32-C6)** | **Working** | Full FreeRTOS dual-task, NVS config, 115200 baud Serial CLI, 4-partition OTA |
+| **Secondary Target (ESP-12E)** | **Supported** | 160 MHz single-loop, LittleFS config, 9600 baud Serial CLI, single-bin OTA (`TODO: verify physical sensor stream`) |
 | **WiFi Streaming** | **Working** | 48 Hz binary packet batches, disconnect ring buffer backfill, clock sync |
-| **Dashboard Live Avatar** | **Working** | Three.js visualizer, 75 ms jitter buffer, SLERP interpolation, latency meter |
+| **Dashboard Live Avatar** | **Working** | Three.js visualizer, 75 ms jitter buffer, SLERP interpolation, hardware badge & heap display |
 | **N-Pose Calibration** | **Working** | Sensor-to-bone offset alignment, yaw drift Re-zero button |
 | **Session Recording** | **Working** | Guarded by required roles check, columnar Parquet streaming storage |
 | **Session Playback** | **Working** | Scrubber, play/pause, variable playback speeds (0.5x, 1x, 2x, 4x) |
 | **Mocap Export** | **Working** | BVH (Biovision Hierarchy), raw calibrated CSV, resampled Parquet, metadata JSON |
-| **USB Flashing & Provisioning** | **Working** | Browser Web Serial via `esptool-js`, token issuance, serial CLI setup |
-| **OTA Firmware Updates** | **Working** | Dual-slot partitions, bootloader rollback protection, live dashboard progress |
+| **USB Flashing & Provisioning** | **Working** | Web Serial via `esptool-js` with automatic chip detection (ESP32-C6 vs ESP8266) |
+| **OTA Firmware Updates** | **Working** | Hardware-aware release distribution under `server/firmware_bin/<hw>/<version>/` |
+| **IMU Bus Options** | **Working** | Build flag `-DIMU_BUS=1` (I2C) or `-DIMU_BUS=2` (SPI, `TODO: verify on physical hardware`) |
 
 ---
 
@@ -105,18 +108,14 @@ pair-tracker-wifi/
 ├── requirements.txt         # Python server and toolchain dependencies
 ├── pyproject.toml           # Pytest test configuration
 ├── roles.yaml               # Body tracking roles and required session role constraints
-├── firmware/                # ESP32-C6 Arduino / PlatformIO embedded firmware
-│   ├── platformio.ini       # PlatformIO build configuration (pioarduino ESP32-C6 platform)
-│   ├── partitions_two_ota.csv # Dual 1984 KB OTA application slot partition table
+├── firmware/                # Embedded C++ firmware for ESP32-C6 & ESP-12E
+│   ├── platformio.ini       # PlatformIO build configuration (esp32c6 & esp12e environments)
+│   ├── partitions_two_ota.csv # Dual 1984 KB OTA application slot partition table (ESP32-C6)
 │   └── src/
-│       ├── main.cpp         # FreeRTOS setup, sensor task (48 Hz), network task
-│       ├── Hardware.h       # Pin definitions (I2C SDA=GPIO20, SCL=GPIO19, ADR=GPIO18, LED=GPIO15, ADC=GPIO0)
-│       ├── IMUManager.cpp   # BNO085 initialization, SH2 report configuration, mount corrections
-│       ├── Battery.h        # 1:2 voltage divider ADC reader (3.0V - 4.2V LiPo)
-│       ├── TrackerNetwork.cpp # WiFi STA, mDNS discovery, binary WS streaming, OTA engine
-│       ├── SerialCLI.cpp    # USB Serial provisioning commands (set ssid/pass/server/role/token)
-│       ├── Roles.h          # Role enumeration and string mapping matching roles.yaml
-│       └── Protocol.h       # Binary batch frame definitions matching server protocol
+│       ├── main.cpp         # Unified entry point (FreeRTOS for C6, cooperative loop for ESP-12E)
+│       ├── boards/          # Pin assignments & hardware specs (esp32c6.h, esp12e.h, board.h)
+│       ├── core/            # Protocol, RingBuffer, Config, ClockSync, CommandParser, SerialCLI
+│       └── hal/             # Hardware Abstraction Layer (IMUBus I2C/SPI, LED, Battery, Storage, OTA, Scheduler)
 ├── server/                  # FastAPI backend server
 │   ├── main.py              # REST API & WebSocket endpoints (/stream, /sessions, /firmware, /ota)
 │   ├── tracker_manager.py   # Connection state, clock sync, packet loss accounting, OTA jobs

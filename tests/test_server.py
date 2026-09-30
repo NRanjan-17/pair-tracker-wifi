@@ -267,3 +267,106 @@ def test_websocket_stream_and_parquet_export():
     tracker_manager.active_connections.clear()
     tracker_manager.role_to_device.clear()
     tracker_manager.active_session_id = None
+
+# 7. Multi-Target ESP-12E and Hardware Telemetry Tests
+def test_esp12e_device_announce_and_telemetry():
+    admin_headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    dev_id = "EE:12:E0:AA:BB:CC"
+    tok = "tok_esp12e_test"
+
+    # Register device
+    res = client.post(
+        "/v1/devices/register",
+        json={"device_id": dev_id, "role": "chest", "token": tok},
+        headers=admin_headers,
+    )
+    assert res.status_code == 201
+
+    # Announce with esp12e hardware telemetry
+    res = client.post(
+        "/v1/devices/announce",
+        json={
+            "device_id": dev_id,
+            "role": "chest",
+            "firmware_version": "1.0.0",
+            "protocol_version": 1,
+            "battery_pct": 88,
+            "battery_mv": 3950,
+            "hw": "esp12e",
+            "flash_size": 4194304,
+            "free_heap": 46500,
+        },
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert data["role_id"] == 1
+
+    # Verify device record in DB
+    dev_row = db.get_device(dev_id)
+    assert dev_row is not None
+    assert dev_row["hw"] == "esp12e"
+    assert dev_row["flash_size"] == 4194304
+    assert dev_row["free_heap"] == 46500
+
+    # Connect WebSocket and send heartbeat with updated free heap
+    with client.websocket_connect(f"/v1/devices/{dev_id}/stream?token={tok}") as ws:
+        hb = {
+            "type": "heartbeat",
+            "hw": "esp12e",
+            "flash_size": 4194304,
+            "free_heap": 44200,
+            "battery_pct": 87,
+            "battery_mv": 3940,
+            "rssi": -62,
+            "uptime_s": 120,
+            "dropped_samples": 0,
+        }
+        ws.send_json(hb)
+        import time
+        time.sleep(0.05)
+
+        # Check in tracker_manager
+        conn = tracker_manager.active_connections[dev_id]
+        assert conn.hw == "esp12e"
+        assert conn.free_heap == 44200
+        assert conn.flash_size == 4194304
+
+    tracker_manager.active_connections.clear()
+    tracker_manager.role_to_device.clear()
+
+def test_firmware_manifests_multi_target():
+    # ESP-12E (ESP8266) manifest
+    res_12e = client.get("/v1/firmware/manifest?hw=esp12e")
+    assert res_12e.status_code == 200
+    m_12e = res_12e.json()
+    assert m_12e["chip"] == "esp8266"
+    assert m_12e["board"] == "esp12e"
+    assert m_12e["baud"] == 9600
+    assert len(m_12e["parts"]) == 1
+    assert m_12e["parts"][0]["offset"] == 0
+    assert m_12e["parts"][0]["name"] == "firmware.bin"
+
+    # ESP32-C6 manifest
+    res_c6 = client.get("/v1/firmware/manifest?hw=esp32c6")
+    assert res_c6.status_code == 200
+    m_c6 = res_c6.json()
+    assert m_c6["chip"] == "esp32c6"
+    assert m_c6["board"] == "seeed_xiao_esp32c6"
+    assert m_c6["baud"] == 115200
+    assert len(m_c6["parts"]) >= 3
+    offsets = [p["offset"] for p in m_c6["parts"]]
+    assert 0 in offsets  # bootloader
+    assert 32768 in offsets  # partitions (0x8000)
+    assert 65536 in offsets  # firmware (0x10000)
+
+    # Latest firmware queries
+    res_lat_12e = client.get("/v1/firmware/latest?hw=esp12e")
+    assert res_lat_12e.status_code == 200
+    assert res_lat_12e.json().get("hw") == "esp12e"
+
+    res_lat_c6 = client.get("/v1/firmware/latest?hw=esp32c6")
+    assert res_lat_c6.status_code == 200
+    assert res_lat_c6.json().get("hw") == "esp32c6"
+

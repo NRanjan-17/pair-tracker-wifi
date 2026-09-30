@@ -46,6 +46,7 @@ class SimulatedTracker:
         simulate_ota_corrupt_hash: bool = False,
         simulate_ota_download_fail: bool = False,
         simulate_ota_rollback: bool = False,
+        hw: str = "esp32c6",
     ):
         self.device_id = device_id
         self.role = role
@@ -61,6 +62,9 @@ class SimulatedTracker:
         self.simulate_ota_corrupt_hash = simulate_ota_corrupt_hash
         self.simulate_ota_download_fail = simulate_ota_download_fail
         self.simulate_ota_rollback = simulate_ota_rollback
+        self.hw = hw
+        self.flash_size = 4194304
+        self.free_heap = 45000 if hw == "esp12e" else 280000
         self.ota_in_progress = False
 
         self.seq = 0
@@ -96,6 +100,9 @@ class SimulatedTracker:
         payload = {
             "device_id": self.device_id,
             "role": self.role,
+            "hw": self.hw,
+            "flash_size": self.flash_size,
+            "free_heap": self.free_heap,
             "firmware_version": self.firmware_version,
             "protocol_version": self.protocol_version,
             "battery_pct": self.battery_pct,
@@ -321,6 +328,9 @@ class SimulatedTracker:
             await asyncio.sleep(5.0)
             hb = {
                 "type": "heartbeat",
+                "hw": self.hw,
+                "flash_size": self.flash_size,
+                "free_heap": self.free_heap,
                 "battery_pct": self.battery_pct,
                 "battery_mv": self.battery_mv,
                 "rssi": self.rssi,
@@ -506,6 +516,7 @@ async def main():
         default="sinusoid",
         help="Motion profile (default: sinusoid for smooth biomechanical oscillation)",
     )
+    parser.add_argument("--hw", choices=["esp32c6", "esp12e"], default="esp32c6", help="Hardware model to simulate")
     parser.add_argument("--duration", type=int, default=0, help="Run duration in seconds (0 = infinite)")
     args = parser.parse_args()
 
@@ -516,7 +527,7 @@ async def main():
     else:
         target_roles = [r.strip() for r in args.roles.split(",") if r.strip()]
 
-    print(f"Starting fake trackers for {len(target_roles)} roles: {target_roles} (motion={args.motion})")
+    print(f"Starting fake trackers for {len(target_roles)} roles: {target_roles} (hw={args.hw}, motion={args.motion})")
 
     trackers = []
     for i, role in enumerate(target_roles):
@@ -531,6 +542,7 @@ async def main():
             clock_skew_ms=args.skew,
             include_raw=args.raw,
             motion=args.motion,
+            hw=args.hw,
         )
         trackers.append(t)
 

@@ -47,23 +47,72 @@ class Database:
                 cursor.execute("ALTER TABLE sessions ADD COLUMN metadata_json TEXT DEFAULT '{}'")
             except sqlite3.OperationalError:
                 pass
+
+            # Ensure hw, flash_size, free_heap exist on devices table
+            for col, col_def in [
+                ("hw", "TEXT DEFAULT 'esp32c6'"),
+                ("flash_size", "INTEGER DEFAULT 0"),
+                ("free_heap", "INTEGER DEFAULT 0"),
+            ]:
+                try:
+                    cursor.execute(f"ALTER TABLE devices ADD COLUMN {col} {col_def}")
+                except sqlite3.OperationalError:
+                    pass
+
             conn.commit()
 
     # Device Operations
-    def register_device(self, device_id: str, role: str, token: str, notes: str = "") -> Dict[str, Any]:
+    def register_device(
+        self,
+        device_id: str,
+        role: str,
+        token: str,
+        notes: str = "",
+        hw: str = "esp32c6",
+        flash_size: int = 0,
+        free_heap: int = 0,
+    ) -> Dict[str, Any]:
         now = int(time.time() * 1000)
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-            INSERT INTO devices (device_id, role, token, notes, created_at, last_seen)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO devices (device_id, role, token, notes, created_at, last_seen, hw, flash_size, free_heap)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(device_id) DO UPDATE SET
                 role = excluded.role,
                 token = excluded.token,
-                notes = excluded.notes
-            """, (device_id, role, token, notes, now, now))
+                notes = excluded.notes,
+                hw = excluded.hw,
+                flash_size = excluded.flash_size,
+                free_heap = excluded.free_heap
+            """, (device_id, role, token, notes, now, now, hw, flash_size, free_heap))
             conn.commit()
         return self.get_device(device_id)
+
+    def update_device_metrics(
+        self,
+        device_id: str,
+        hw: Optional[str] = None,
+        flash_size: Optional[int] = None,
+        free_heap: Optional[int] = None,
+    ):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            updates = []
+            params = []
+            if hw is not None:
+                updates.append("hw = ?")
+                params.append(hw)
+            if flash_size is not None:
+                updates.append("flash_size = ?")
+                params.append(flash_size)
+            if free_heap is not None:
+                updates.append("free_heap = ?")
+                params.append(free_heap)
+            if updates:
+                params.append(device_id)
+                cursor.execute(f"UPDATE devices SET {', '.join(updates)} WHERE device_id = ?", params)
+                conn.commit()
 
     def get_device(self, device_id: str) -> Optional[Dict[str, Any]]:
         with self._get_connection() as conn:

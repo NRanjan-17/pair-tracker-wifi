@@ -52,6 +52,9 @@ class TrackerConnection:
         self.battery_mv: Optional[int] = None
         self.rssi: Optional[int] = None
         self.uptime_s: Optional[int] = None
+        self.hw: str = "esp32c6"
+        self.flash_size: Optional[int] = None
+        self.free_heap: Optional[int] = None
         self.firmware_version: str = "unknown"
         self.protocol_version: int = 1
         self.protocol_outdated: bool = False
@@ -72,6 +75,9 @@ class TrackerConnection:
             "role": self.role,
             "role_id": self.role_id,
             "online": True,
+            "hw": self.hw,
+            "flash_size": self.flash_size,
+            "free_heap": self.free_heap,
             "firmware_version": self.firmware_version,
             "protocol_version": self.protocol_version,
             "protocol_outdated": self.protocol_outdated,
@@ -118,6 +124,9 @@ class TrackerManager:
         battery_mv: Optional[int],
         firmware_version: Optional[str] = None,
         protocol_version: Optional[int] = None,
+        hw: Optional[str] = None,
+        flash_size: Optional[int] = None,
+        free_heap: Optional[int] = None,
     ):
         cached = self.cached_announced_telemetry.get(device_id, {})
         if battery_pct is not None:
@@ -128,6 +137,12 @@ class TrackerManager:
             cached["firmware_version"] = firmware_version
         if protocol_version is not None:
             cached["protocol_version"] = protocol_version
+        if hw is not None:
+            cached["hw"] = hw
+        if flash_size is not None:
+            cached["flash_size"] = flash_size
+        if free_heap is not None:
+            cached["free_heap"] = free_heap
 
         self.cached_announced_telemetry[device_id] = cached
 
@@ -142,6 +157,12 @@ class TrackerManager:
             if protocol_version is not None:
                 conn.protocol_version = protocol_version
                 conn.protocol_outdated = (protocol_version < REQUIRED_PROTOCOL_VERSION)
+            if hw is not None:
+                conn.hw = hw
+            if flash_size is not None:
+                conn.flash_size = flash_size
+            if free_heap is not None:
+                conn.free_heap = free_heap
 
     def create_ota_job(self, device_id: str, version: str) -> OTAJob:
         job_id = f"job_ota_{uuid.uuid4().hex[:12]}"
@@ -206,8 +227,23 @@ class TrackerManager:
                 del self.active_connections[old_dev_id]
 
         conn = TrackerConnection(device_id=device_id, role=role, token=token, ws=ws)
+        dev_row = db.get_device(device_id)
+        if dev_row:
+            if dev_row.get("hw"):
+                conn.hw = dev_row["hw"]
+            if dev_row.get("flash_size"):
+                conn.flash_size = dev_row["flash_size"]
+            if dev_row.get("free_heap"):
+                conn.free_heap = dev_row["free_heap"]
+
         if device_id in self.cached_announced_telemetry:
             cached = self.cached_announced_telemetry[device_id]
+            if cached.get("hw"):
+                conn.hw = cached["hw"]
+            if cached.get("flash_size") is not None:
+                conn.flash_size = cached["flash_size"]
+            if cached.get("free_heap") is not None:
+                conn.free_heap = cached["free_heap"]
             conn.battery_pct = cached.get("battery_pct")
             conn.battery_mv = cached.get("battery_mv")
             if cached.get("firmware_version"):
@@ -238,6 +274,9 @@ class TrackerManager:
                 "role": conn.role,
                 "role_id": conn.role_id,
                 "online": False,
+                "hw": conn.hw,
+                "flash_size": conn.flash_size,
+                "free_heap": conn.free_heap,
                 "firmware_version": conn.firmware_version,
                 "protocol_version": conn.protocol_version,
                 "protocol_outdated": conn.protocol_outdated,
@@ -273,6 +312,9 @@ class TrackerManager:
                     "role": role_name,
                     "role_id": roles_registry.get_role_id(role_name) or 0,
                     "online": False,
+                    "hw": reg.get("hw") or cached.get("hw") or "esp32c6",
+                    "flash_size": reg.get("flash_size") or cached.get("flash_size") or 0,
+                    "free_heap": reg.get("free_heap") or cached.get("free_heap") or 0,
                     "firmware_version": cached_fw,
                     "protocol_version": cached_proto,
                     "protocol_outdated": (cached_proto < REQUIRED_PROTOCOL_VERSION),
@@ -389,6 +431,19 @@ class TrackerManager:
             conn.rssi = data["rssi"]
         if "uptime_s" in data:
             conn.uptime_s = data["uptime_s"]
+        if "hw" in data:
+            conn.hw = data["hw"]
+        if "flash_size" in data:
+            conn.flash_size = data["flash_size"]
+        if "free_heap" in data:
+            conn.free_heap = data["free_heap"]
+
+        db.update_device_metrics(
+            device_id=device_id,
+            hw=conn.hw,
+            flash_size=conn.flash_size,
+            free_heap=conn.free_heap,
+        )
 
         device_dict = conn.to_dict()
         await self.broadcast_dashboard({"type": "telemetry", "device": device_dict})

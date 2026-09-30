@@ -38,14 +38,17 @@ export class TrackerFlasher {
     }
 
     try {
-      // Step 1: Connect to ESP32 (Web Serial)
-      this.callbacks.onStepChange(1, 'Connecting to ESP32 via Web Serial...');
-      this.callbacks.onLog('Requesting Serial Port... Please select your Seeed XIAO ESP32-C6 in the browser popup.\n');
+      // Step 1: Connect to ESP32 / ESP8266 (Web Serial)
+      this.callbacks.onStepChange(1, 'Connecting to microcontroller via Web Serial...');
+      this.callbacks.onLog('Requesting Serial Port... Please select your connected tracker board in the browser popup.\n');
 
       const serialPort = await (navigator as any).serial.requestPort({
         filters: [
           { usbVendorId: 0x303a }, // Espressif VID
           { usbVendorId: 0x2886 }, // Seeed VID
+          { usbVendorId: 0x1a86 }, // CH340 VID (common on ESP-12E / NodeMCU)
+          { usbVendorId: 0x10c4 }, // Silicon Labs CP210x
+          { usbVendorId: 0x0403 }, // FTDI
         ],
       });
 
@@ -65,13 +68,27 @@ export class TrackerFlasher {
       this.callbacks.onLog('Syncing with ROM bootloader...\n');
       await esploader.main();
 
-      let chipName = 'ESP32-C6';
+      let chipName = '';
       try {
         chipName = await esploader.chip.getChipDescription(esploader);
       } catch (e) {
         // Fallback
       }
-      this.callbacks.onLog(`Detected chip: ${chipName}\n`);
+      this.callbacks.onLog(`Detected chip: ${chipName || 'Unknown'}\n`);
+
+      let detectedHw = 'esp32c6';
+      if (chipName.toLowerCase().includes('8266')) {
+        detectedHw = 'esp12e';
+      } else if (chipName.toLowerCase().includes('c6')) {
+        detectedHw = 'esp32c6';
+      } else {
+        // Prompt user if chip cannot be determined automatically
+        const userChoice = window.confirm(
+          `Detected chip '${chipName || 'Unknown'}'. Is this an ESP-12E (ESP8266)?\nClick OK for ESP-12E, or Cancel for ESP32-C6.`
+        );
+        detectedHw = userChoice ? 'esp12e' : 'esp32c6';
+      }
+      this.callbacks.onLog(`Using hardware target profile: ${detectedHw}\n`);
 
       // Read MAC address
       let mac = '';
@@ -79,12 +96,12 @@ export class TrackerFlasher {
         mac = (await esploader.chip.readMac(esploader)).toUpperCase();
       } catch (e: any) {
         this.callbacks.onLog(`Could not read MAC from chip eFuse: ${e.message}\n`);
-        throw new Error(`Failed to read MAC address from ESP32: ${e.message}`);
+        throw new Error(`Failed to read MAC address from device: ${e.message}`);
       }
       this.callbacks.onLog(`Device MAC Address: ${mac}\n`);
 
       // Step 2: Register device on server
-      this.callbacks.onStepChange(2, `Registering ${mac} with role '${config.role}'...`);
+      this.callbacks.onStepChange(2, `Registering ${mac} with role '${config.role}' (${detectedHw})...`);
       this.callbacks.onLog(`Calling POST /v1/devices/register on server...\n`);
 
       const regRes = await fetch('/v1/devices/register', {
@@ -97,7 +114,7 @@ export class TrackerFlasher {
           device_id: mac,
           role: config.role,
           token: config.token && config.token.trim() ? config.token.trim() : undefined,
-          notes: `Provisioned via Web Serial for role ${config.role}`,
+          notes: `Provisioned via Web Serial for role ${config.role} (${detectedHw})`,
         }),
       });
 
@@ -111,16 +128,16 @@ export class TrackerFlasher {
       this.callbacks.onLog(`Registration successful! Role: ${regData.role}, Token: ${deviceToken}\n`);
 
       // Step 3: Fetch Firmware Manifest and Binaries
-      this.callbacks.onStepChange(3, 'Fetching firmware binaries from server...');
-      this.callbacks.onLog('Fetching /v1/firmware/manifest...\n');
+      this.callbacks.onStepChange(3, `Fetching ${detectedHw} firmware binaries from server...`);
+      this.callbacks.onLog(`Fetching /v1/firmware/manifest?hw=${detectedHw}...\n`);
 
-      const manifestRes = await fetch('/v1/firmware/manifest');
+      const manifestRes = await fetch(`/v1/firmware/manifest?hw=${detectedHw}`);
       if (!manifestRes.ok) {
         throw new Error(`Failed to fetch firmware manifest (${manifestRes.status})`);
       }
       const manifest = await manifestRes.json();
       if (!manifest.parts || manifest.parts.length === 0) {
-        throw new Error('Firmware manifest contains no binary parts. Run "make firmware-bin" first.');
+        throw new Error(`Firmware manifest for ${detectedHw} contains no binary parts. Run "make firmware-bin" first.`);
       }
 
       const fileArray: Array<{ data: Uint8Array; address: number }> = [];
@@ -137,8 +154,9 @@ export class TrackerFlasher {
         });
       }
 
-      // Step 4: Flash ESP32-C6 via esptool-js
-      this.callbacks.onStepChange(4, 'Flashing firmware to ESP32-C6...');
+      // Step 4: Flash firmware via esptool-js
+      const targetLabel = detectedHw === 'esp12e' ? 'ESP-12E (ESP8266)' : 'ESP32-C6';
+      this.callbacks.onStepChange(4, `Flashing firmware to ${targetLabel}...`);
       this.callbacks.onLog(`Starting flash write for ${fileArray.length} binary partitions...\n`);
 
       await esploader.writeFlash({
@@ -164,12 +182,13 @@ export class TrackerFlasher {
       await transport.disconnect();
 
       // Step 5: Send Provisioning Serial Commands
+      const targetBaud = detectedHw === 'esp12e' ? 9600 : 115200;
       this.callbacks.onStepChange(5, 'Provisioning WiFi credentials and role over Serial...');
-      this.callbacks.onLog('Opening serial port at 115200 baud for line protocol CLI...\n');
+      this.callbacks.onLog(`Opening serial port at ${targetBaud} baud for line protocol CLI...\n`);
 
       await new Promise((r) => setTimeout(r, 1200)); // Allow chip to boot into firmware
 
-      await serialPort.open({ baudRate: 115200 });
+      await serialPort.open({ baudRate: targetBaud });
       const textEncoder = new TextEncoder();
       const writer = serialPort.writable.getWriter();
 

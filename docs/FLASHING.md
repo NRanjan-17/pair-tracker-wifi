@@ -49,27 +49,30 @@ The server will serve:
    Click on the **"⚡ Flash & Provision"** tab in the top navigation bar.
 3. **Fill in Provisioning Parameters**:
    - **Role**: Select the physical body placement for this tracker (e.g., `chest`, `left_thigh`, `right_foot`).
-   - **WiFi SSID**: Enter your 2.4 GHz WiFi network name (ESP32-C6 supports 2.4 GHz 802.11b/g/n/ax; 5 GHz networks are not supported).
+   - **WiFi SSID**: Enter your 2.4 GHz WiFi network name (both ESP32-C6 and ESP8266 support 2.4 GHz networks; 5 GHz networks are not supported).
    - **WiFi Password**: Enter your WiFi network passphrase.
    - **Server Host**: The IP address or hostname of your Pair server (defaults to `pair.local` or the server's local LAN IP e.g. `192.168.1.100`).
    - **Server Port**: Port `8000`.
    - **Device Token (Optional)**: Leave empty to auto-generate a secure token, or provide a specific token.
-4. **Connect Tracker via USB-C**:
-   Plug the XIAO ESP32-C6 into your computer using the USB-C data cable.
+4. **Connect Tracker via USB Cable**:
+   Plug the tracker board (Seeed XIAO ESP32-C6 or NodeMCU / ESP-12E) into your computer using a data cable.
 5. **Click "Connect & Flash Tracker"**:
    A native browser device chooser modal will pop up. Select the device matching:
-   - `USB JTAG/serial debug unit` or `Seeed Studio XIAO ESP32C6` (Vendor ID: `0x303a` or `0x2886`).
+   - For ESP32-C6: `USB JTAG/serial debug unit` or `Seeed Studio XIAO ESP32C6` (Vendor ID: `0x303a` or `0x2886`).
+   - For ESP-12E: `USB-Serial Controller` (CH340 `0x1a86`, CP210x `0x10c4`, or FTDI `0x0403`).
    - Click **Connect**.
-6. **Watch the Automated Execution**:
+6. **Watch the Automated Multi-Target Execution**:
    The flasher executes 6 automated steps:
-   - **Step 1: Connecting via Web Serial**: Syncs with ROM bootloader at 921,600 baud and reads the hardware MAC address.
+   - **Step 1: Connecting via Web Serial**: Syncs with ROM bootloader, identifies the chip family (ESP32-C6 vs ESP8266 / ESP-12E; prompts user if ambiguous), and reads the hardware MAC address.
    - **Step 2: Registering Device**: Calls `POST /v1/devices/register` with the MAC address and role.
-   - **Step 3: Downloading Binaries**: Downloads `bootloader.bin` (0x0), `partitions.bin` (0x9000), `boot_app0.bin` (0xe000), and `firmware.bin` (0x10000) from the server.
+   - **Step 3: Downloading Target Binaries**:
+     - *For ESP32-C6*: Fetches `/v1/firmware/manifest?hw=esp32c6` and downloads 4 partitions: `bootloader.bin` (0x0), `partitions.bin` (0x8000), `boot_app0.bin` (0xe000), and `firmware.bin` (0x10000).
+     - *For ESP-12E*: Fetches `/v1/firmware/manifest?hw=esp12e` and downloads a single flat image `firmware.bin` (0x0).
    - **Step 4: Writing Flash**: Compresses and writes the partitions to SPI NOR flash with a live progress bar.
-   - **Step 5: Serial Provisioning**: Performs a hardware reset, opens the serial CLI at 115,200 baud, sends the `set` commands (`ssid`, `pass`, `server`, `port`, `token`, `role`), and issues `reboot`.
+   - **Step 5: Serial Provisioning**: Performs a hardware reset, opens the serial CLI at **115,200 baud for ESP32-C6** or **9600 baud for ESP-12E**, sends the `set` commands (`ssid`, `pass`, `server`, `port`, `token`, `role`), and issues `reboot`.
    - **Step 6: WiFi Announce**: Prompts **"Switch ON the tracker"** (if powered by battery switch) and polls `GET /v1/devices` until the tracker announces.
 7. **Success Confirmation**:
-   The wizard displays a green success badge showing the tracker's MAC address, assigned role, and online status. Disconnect the USB-C cable and label the tracker.
+   The wizard displays a green success badge showing the tracker's MAC address, hardware model, assigned role, and online status. Disconnect the USB cable and label the tracker.
 
 ---
 
@@ -84,38 +87,37 @@ Connect the XIAO ESP32-C6 via USB-C. Identify the serial port:
 - **Windows**: `COM3`, `COM4`, etc.
 
 ### Step 2: Build and Upload via PlatformIO
-Run the following command from the repository root:
+
+Run the upload command for your target environment:
+
+**For Seeed Studio XIAO ESP32-C6 (Primary Target):**
 ```bash
 . .venv/bin/activate
-cd firmware
-pio run -t upload
-cd ..
+pio run -d firmware -e seeed_xiao_esp32c6 -t upload
 ```
-*Expected output:*
+
+**For ESP-12E / NodeMCU ESP8266 (Secondary Target):**
+```bash
+. .venv/bin/activate
+pio run -d firmware -e esp12e -t upload
 ```
-RAM:   [==        ]  16.8% (used 55184 bytes from 327680 bytes)
-Flash: [=======   ]  67.2% (used 1324864 bytes from 1970176 bytes)
-Building .pio/build/seeed_xiao_esp32c6/firmware.bin
-esptool.py v4.8.4
-Connecting...
-Writing at 0x00010000... (100%)
-Wrote 1324864 bytes (812304 compressed) at 0x00010000 in 11.2 seconds.
-Hash of data verified.
-Leaving...
-Hard resetting via RTS pin...
-========================= [SUCCESS] Took 16.42 seconds =========================
-```
+*(Upload speed is 115200 baud for maximum CH340 / CP2102 reliability).*
 
 ---
 
 ## 5. Serial Provisioning CLI Protocol
 
-Once firmware is uploaded, the tracker runs a line-oriented serial configuration interface at **115,200 baud** (8-N-1, `\n` line endings).
+Once firmware is uploaded, the tracker runs an interactive line-oriented serial configuration interface (`\n` line endings):
+- **ESP32-C6**: Operates at **115,200 baud** (persisted in NVS namespace `pair_cfg`).
+- **ESP-12E**: Operates at **9600 baud** (persisted in LittleFS file `/pair_cfg.json`).
 
-Open the serial monitor:
+Open the serial monitor for your device:
 ```bash
-. .venv/bin/activate
-pio device monitor -d firmware -b 115200
+# For ESP32-C6
+pio device monitor -d firmware -e seeed_xiao_esp32c6 -b 115200
+
+# For ESP-12E
+pio device monitor -d firmware -e esp12e -b 9600
 ```
 
 ### Available Commands
@@ -128,8 +130,8 @@ pio device monitor -d firmware -b 115200
 | `set port` | `set port 8000` | Sets Pair server HTTP/WS port (default `8000`). |
 | `set token` | `set token dev_sec_abc123` | Sets device authentication Bearer token. |
 | `set role` | `set role chest` | Sets body role identifier (see table below). |
-| `show` | `show` | Dumps current non-volatile settings from NVS. |
-| `reboot` | `reboot` | Saves configuration and restarts the ESP32-C6. |
+| `show` | `show` | Dumps current non-volatile settings from NVS / LittleFS. |
+| `reboot` | `reboot` | Saves configuration and restarts the microcontroller. |
 
 ### Provisioning Example Session
 ```text

@@ -101,6 +101,9 @@ class DeviceRegisterRequest(BaseModel):
 class DeviceAnnounceRequest(BaseModel):
     device_id: str
     role: str
+    hw: Optional[str] = "esp32c6"
+    flash_size: Optional[int] = None
+    free_heap: Optional[int] = None
     firmware_version: Optional[str] = "1.0.0"
     protocol_version: Optional[int] = 1
     battery_pct: Optional[int] = None
@@ -137,20 +140,39 @@ async def get_dashboard_asset(asset_path: str):
         return FileResponse(asset_file)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
 
-def get_all_firmware_manifests() -> List[Dict[str, Any]]:
+def get_all_firmware_manifests(hw: Optional[str] = None) -> List[Dict[str, Any]]:
     if not FIRMWARE_BIN_DIR.exists():
         return []
     manifests = []
-    for p in FIRMWARE_BIN_DIR.iterdir():
-        if p.is_dir():
-            m_file = p / "manifest.json"
-            if m_file.exists():
-                try:
-                    with open(m_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        manifests.append(data)
-                except Exception:
-                    pass
+
+    search_dirs: List[Tuple[str, Path]] = []
+    if hw:
+        hw_dir = FIRMWARE_BIN_DIR / hw
+        if hw_dir.exists():
+            search_dirs.append((hw, hw_dir))
+        elif hw == "esp32c6":
+            search_dirs.append((hw, FIRMWARE_BIN_DIR))
+    else:
+        for p in FIRMWARE_BIN_DIR.iterdir():
+            if p.is_dir() and p.name in ("esp32c6", "esp12e"):
+                search_dirs.append((p.name, p))
+        # Legacy root layout
+        search_dirs.append(("esp32c6", FIRMWARE_BIN_DIR))
+
+    for target_hw, base_dir in search_dirs:
+        for p in base_dir.iterdir():
+            if p.is_dir() and p.name not in ("esp32c6", "esp12e"):
+                m_file = p / "manifest.json"
+                if m_file.exists():
+                    try:
+                        with open(m_file, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            if "hw" not in data:
+                                data["hw"] = target_hw
+                            if not any(m.get("version") == data.get("version") and m.get("hw") == data.get("hw") for m in manifests):
+                                manifests.append(data)
+                    except Exception:
+                        pass
 
     def parse_v(v_str):
         return [int(x) for x in re.findall(r"\d+", str(v_str))]
@@ -158,65 +180,39 @@ def get_all_firmware_manifests() -> List[Dict[str, Any]]:
     manifests.sort(key=lambda m: parse_v(m.get("version", "0")), reverse=True)
     return manifests
 
-def get_latest_firmware_manifest() -> Optional[Dict[str, Any]]:
-    manifests = get_all_firmware_manifests()
+def get_latest_firmware_manifest(hw: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    manifests = get_all_firmware_manifests(hw=hw)
     return manifests[0] if manifests else None
 
-def get_firmware_manifest_by_version(version: str) -> Optional[Dict[str, Any]]:
+def get_firmware_manifest_by_version(version: str, hw: Optional[str] = None) -> Optional[Dict[str, Any]]:
     if version == "latest":
-        return get_latest_firmware_manifest()
+        return get_latest_firmware_manifest(hw=hw)
+
+    if hw:
+        m_file = FIRMWARE_BIN_DIR / hw / version / "manifest.json"
+        if m_file.exists():
+            try:
+                with open(m_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if "hw" not in data:
+                        data["hw"] = hw
+                    return data
+            except Exception:
+                pass
+
     m_file = FIRMWARE_BIN_DIR / version / "manifest.json"
     if m_file.exists():
         try:
             with open(m_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                if "hw" not in data:
+                    data["hw"] = hw or "esp32c6"
+                return data
         except Exception:
             return None
     return None
 
-# Firmware & Web Serial Flashing Endpoints
-@app.get("/v1/firmware/latest")
-async def get_latest_firmware():
-    manifest = get_latest_firmware_manifest()
-    if not manifest:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No firmware releases available",
-        )
-    return manifest
-
-@app.get("/v1/firmware/manifest")
-async def get_firmware_manifest():
-    """
-    Returns ESP32-C6 flash partition offsets and paths for Web Serial esptool-js flashing.
-    """
-    manifest_parts = [
-        {"name": "bootloader.bin", "offset": 0, "path": "/v1/firmware/bootloader.bin"},
-        {"name": "partitions.bin", "offset": 32768, "path": "/v1/firmware/partitions.bin"}, # 0x8000
-        {"name": "boot_app0.bin", "offset": 57344, "path": "/v1/firmware/boot_app0.bin"},   # 0xe000
-        {"name": "firmware.bin", "offset": 65536, "path": "/v1/firmware/firmware.bin"},     # 0x10000
-    ]
-    available = []
-    for part in manifest_parts:
-        file_path = FIRMWARE_BIN_DIR / part["name"]
-        if file_path.exists():
-            part["size"] = file_path.stat().st_size
-            available.append(part)
-
-    return {
-        "chip": "esp32c6",
-        "board": "seeed_xiao_esp32c6",
-        "version": "1.0.0",
-        "parts": available,
-    }
-
-@app.get("/v1/firmware/{version}/firmware.bin")
-async def get_versioned_firmware_binary(
-    version: str,
-    authorization: Optional[str] = Header(None),
-    token: Optional[str] = Query(None),
-):
-    # Device token authentication
+def _authenticate_firmware_request(authorization: Optional[str], token: Optional[str]):
     req_token = token
     if authorization and authorization.startswith("Bearer "):
         req_token = authorization[7:].strip()
@@ -228,32 +224,132 @@ async def get_versioned_firmware_binary(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Validate against ADMIN_TOKEN, DB registered devices, or active connections
     dev = db.get_device_by_token(req_token)
     is_active_token = any(c.token == req_token for c in tracker_manager.active_connections.values())
-    if req_token != ADMIN_TOKEN and req_token != "pair_admin_secret" and req_token != "eidon_admin_secret" and not dev and not is_active_token:
+    if req_token != ADMIN_TOKEN and req_token not in ("pair_admin_secret", "eidon_admin_secret") and not dev and not is_active_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid device token",
         )
 
+def _find_firmware_bin(version: str, hw: Optional[str] = None) -> Tuple[Path, str]:
     resolved_version = version
     if resolved_version == "latest":
-        latest = get_latest_firmware_manifest()
+        latest = get_latest_firmware_manifest(hw=hw)
         if not latest:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No firmware releases available",
+                detail=f"No firmware releases available for hw '{hw or 'any'}'",
             )
         resolved_version = latest["version"]
+        if not hw and latest.get("hw"):
+            hw = latest["hw"]
 
-    bin_path = FIRMWARE_BIN_DIR / resolved_version / "firmware.bin"
-    if not bin_path.exists() or not bin_path.is_file():
+    candidates = []
+    if hw:
+        candidates.append(FIRMWARE_BIN_DIR / hw / resolved_version / "firmware.bin")
+    candidates.append(FIRMWARE_BIN_DIR / resolved_version / "firmware.bin")
+    if hw:
+        candidates.append(FIRMWARE_BIN_DIR / hw / "firmware.bin")
+    candidates.append(FIRMWARE_BIN_DIR / "firmware.bin")
+
+    for p in candidates:
+        if p.exists() and p.is_file():
+            return p, resolved_version
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Firmware binary for version '{version}' (hw={hw}) not found",
+    )
+
+# Firmware & Web Serial Flashing Endpoints
+@app.get("/v1/firmware/latest")
+async def get_latest_firmware(hw: Optional[str] = Query(None)):
+    manifest = get_latest_firmware_manifest(hw=hw)
+    if not manifest:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Firmware binary for version '{version}' not found",
+            detail="No firmware releases available",
         )
+    return manifest
 
+@app.get("/v1/firmware/manifest")
+async def get_firmware_manifest(hw: Optional[str] = Query("esp32c6")):
+    """
+    Returns flash partition offsets and paths for Web Serial esptool-js flashing.
+    """
+    if hw in ("esp12e", "esp8266"):
+        # ESP-12E (ESP8266) single flat image flashed at 0x0
+        bin_file = FIRMWARE_BIN_DIR / "esp12e" / "firmware.bin"
+        if not bin_file.exists():
+            latest = get_latest_firmware_manifest(hw="esp12e")
+            if latest:
+                bin_file = FIRMWARE_BIN_DIR / "esp12e" / latest["version"] / "firmware.bin"
+
+        parts = []
+        if bin_file.exists():
+            parts.append({
+                "name": "firmware.bin",
+                "offset": 0,
+                "path": "/v1/firmware/esp12e/latest/firmware.bin",
+                "size": bin_file.stat().st_size,
+            })
+
+        return {
+            "chip": "esp8266",
+            "board": "esp12e",
+            "baud": 9600,
+            "version": "1.0.0",
+            "parts": parts,
+        }
+
+    # ESP32-C6 default layout
+    c6_dir = FIRMWARE_BIN_DIR / "esp32c6"
+    base_dir = c6_dir if c6_dir.exists() and (c6_dir / "firmware.bin").exists() else FIRMWARE_BIN_DIR
+
+    manifest_parts = [
+        {"name": "bootloader.bin", "offset": 0, "path": "/v1/firmware/bootloader.bin"},
+        {"name": "partitions.bin", "offset": 32768, "path": "/v1/firmware/partitions.bin"}, # 0x8000
+        {"name": "boot_app0.bin", "offset": 57344, "path": "/v1/firmware/boot_app0.bin"},   # 0xe000
+        {"name": "firmware.bin", "offset": 65536, "path": "/v1/firmware/firmware.bin"},     # 0x10000
+    ]
+    available = []
+    for part in manifest_parts:
+        file_path = base_dir / part["name"]
+        if not file_path.exists() and base_dir != FIRMWARE_BIN_DIR:
+            file_path = FIRMWARE_BIN_DIR / part["name"]
+        if file_path.exists():
+            part["size"] = file_path.stat().st_size
+            available.append(part)
+
+    return {
+        "chip": "esp32c6",
+        "board": "seeed_xiao_esp32c6",
+        "baud": 115200,
+        "version": "1.0.0",
+        "parts": available,
+    }
+
+@app.get("/v1/firmware/{hw}/{version}/firmware.bin")
+async def get_hw_versioned_firmware_binary(
+    hw: str,
+    version: str,
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+):
+    _authenticate_firmware_request(authorization, token)
+    bin_path, resolved_version = _find_firmware_bin(version=version, hw=hw)
+    return FileResponse(bin_path, media_type="application/octet-stream", filename=f"firmware_{hw}_{resolved_version}.bin")
+
+@app.get("/v1/firmware/{version}/firmware.bin")
+async def get_versioned_firmware_binary(
+    version: str,
+    hw: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+):
+    _authenticate_firmware_request(authorization, token)
+    bin_path, resolved_version = _find_firmware_bin(version=version, hw=hw)
     return FileResponse(bin_path, media_type="application/octet-stream", filename=f"firmware_{resolved_version}.bin")
 
 @app.get("/v1/firmware/{filename}")
@@ -261,6 +357,11 @@ async def get_firmware_binary(filename: str):
     safe_name = Path(filename).name
     file_path = FIRMWARE_BIN_DIR / safe_name
     if not file_path.exists() or not file_path.is_file():
+        # Check subdirectories
+        for sub in ("esp32c6", "esp12e"):
+            sub_p = FIRMWARE_BIN_DIR / sub / safe_name
+            if sub_p.exists() and sub_p.is_file():
+                return FileResponse(sub_p, media_type="application/octet-stream", filename=safe_name)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Firmware binary not found")
     return FileResponse(file_path, media_type="application/octet-stream", filename=safe_name)
 
@@ -315,11 +416,14 @@ async def trigger_device_ota(
     if not target_version:
         target_version = "latest"
 
-    manifest = get_firmware_manifest_by_version(target_version)
+    target_hw = getattr(conn, "hw", None) or "esp32c6"
+    manifest = get_firmware_manifest_by_version(target_version, hw=target_hw)
+    if not manifest:
+        manifest = get_firmware_manifest_by_version(target_version)
     if not manifest:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Firmware version '{target_version}' not found",
+            detail=f"Firmware version '{target_version}' not found for hw '{target_hw}'",
         )
 
     # Create tracked OTA job
@@ -329,7 +433,8 @@ async def trigger_device_ota(
     ota_cmd = {
         "type": "ota",
         "version": manifest["version"],
-        "url": f"/v1/firmware/{manifest['version']}/firmware.bin",
+        "hw": target_hw,
+        "url": f"/v1/firmware/{target_hw}/{manifest['version']}/firmware.bin",
         "sha256": manifest["sha256"],
         "size": manifest["size"],
         "min_protocol": manifest.get("min_protocol", 1),
@@ -424,16 +529,32 @@ async def announce_device(
     else:
         # If not registered, auto-register with default or provided role
         token = authorization[7:].strip() if (authorization and authorization.startswith("Bearer ")) else "default_token"
-        db.register_device(payload.device_id, payload.role, token)
+        db.register_device(
+            payload.device_id,
+            payload.role,
+            token,
+            hw=payload.hw or "esp32c6",
+            flash_size=payload.flash_size or 0,
+            free_heap=payload.free_heap or 0,
+        )
 
     now_ms = int(time.time() * 1000)
     db.update_last_seen(payload.device_id, now_ms)
+    db.update_device_metrics(
+        device_id=payload.device_id,
+        hw=payload.hw or "esp32c6",
+        flash_size=payload.flash_size or 0,
+        free_heap=payload.free_heap or 0,
+    )
     tracker_manager.cache_announced_telemetry(
         device_id=payload.device_id,
         battery_pct=payload.battery_pct,
         battery_mv=payload.battery_mv,
         firmware_version=payload.firmware_version,
         protocol_version=payload.protocol_version,
+        hw=payload.hw or "esp32c6",
+        flash_size=payload.flash_size,
+        free_heap=payload.free_heap,
     )
     await tracker_manager.handle_device_announce_ota(
         device_id=payload.device_id,

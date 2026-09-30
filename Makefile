@@ -62,14 +62,15 @@ pio-build:
 	cd firmware && . ../.venv/bin/activate && pio run
 
 firmware-bin: pio-build
-	mkdir -p server/firmware_bin
-	cp firmware/.pio/build/seeed_xiao_esp32c6/bootloader.bin server/firmware_bin/
-	cp firmware/.pio/build/seeed_xiao_esp32c6/partitions.bin server/firmware_bin/
-	cp firmware/.pio/build/seeed_xiao_esp32c6/firmware.bin server/firmware_bin/
+	mkdir -p server/firmware_bin/esp32c6 server/firmware_bin/esp12e
+	cp firmware/.pio/build/seeed_xiao_esp32c6/bootloader.bin server/firmware_bin/esp32c6/
+	cp firmware/.pio/build/seeed_xiao_esp32c6/partitions.bin server/firmware_bin/esp32c6/
+	cp firmware/.pio/build/seeed_xiao_esp32c6/firmware.bin server/firmware_bin/esp32c6/
 	@if [ -f ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin ]; then \
-		cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin server/firmware_bin/ ; \
+		cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin server/firmware_bin/esp32c6/ ; \
 	fi
-	@echo "Firmware binaries copied to server/firmware_bin/"
+	cp firmware/.pio/build/esp12e/firmware.bin server/firmware_bin/esp12e/
+	@echo "Firmware binaries for esp32c6 and esp12e copied to server/firmware_bin/"
 
 release: pio-build
 	. .venv/bin/activate && python3 tools/release_firmware.py $(VERSION)

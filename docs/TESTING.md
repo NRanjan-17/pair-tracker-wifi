@@ -269,3 +269,39 @@ For production deployments or endurance testing:
    - Click **"⏹ Stop"**.
    - Confirm the session file appears in the **Recorded Sessions** tab.
    - Open playback and verify fluid motion with zero freezes or gimbal locking.
+
+---
+
+## 9. ESP-12E Target Testing & Verification Status
+
+### 9.1 Multi-Target CI Build Verification
+Both targets are validated on every build:
+```bash
+# Build both environments
+pio run -d firmware
+
+# Or build individually
+pio run -d firmware -e seeed_xiao_esp32c6
+pio run -d firmware -e esp12e
+```
+
+### 9.2 Simulation with Fake Tracker
+```bash
+# Simulate ESP-12E tracker announcing hw="esp12e" with ~45 KB free heap
+python3 tools/fake_tracker.py --hw esp12e --roles chest
+```
+
+### 9.3 Hardware Verification Status Matrix
+
+| Test Item | ESP32-C6 (Primary) | ESP-12E (Secondary) | Status | Notes |
+|:---|:---:|:---:|:---:|:---|
+| **Firmware Compilation** | Verified | Verified | ✅ PASSED | Clean build under PlatformIO |
+| **Serial CLI (Baud Rate)** | 115200 bps | 9600 bps | ✅ PASSED | Silkscreen baud rate honored |
+| **Boot & Free Heap** | ~280 KB | ~46.7 KB | ✅ PASSED | Real hardware tested on ESP8266EX |
+| **Web Serial Flashing** | Verified | Verified | ✅ PASSED | esptool-js auto-detects chip family |
+| **Server Announce & Metrics** | Verified | Verified | ✅ PASSED | `hw`, `flash_size`, `free_heap` stored in DB |
+| **BNO085 I2C 100 kHz Bus** | Verified | Unverified | ⚠️ `TODO: verify` | Step 0 scanner ran; sensor was unattached |
+| **BNO085 SPI Bus Option** | N/A | Implemented | ⚠️ `TODO: verify` | Requires PS1 solder bridge on BNO085 |
+| **10-min Stream Loss & Heap** | Verified | Simulated | ⚠️ `TODO: verify` | Full 10-min soak test on real sensor |
+| **LittleFS Configuration** | N/A | Implemented | ⚠️ `TODO: verify` | Config read/write on physical flash |
+

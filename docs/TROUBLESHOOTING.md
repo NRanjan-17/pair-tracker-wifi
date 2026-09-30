@@ -209,3 +209,34 @@ This guide provides symptom $\rightarrow$ cause $\rightarrow$ resolution steps f
      - If **End-to-End Latency** is yellow or red ($> 150\text{ ms}$), the local WiFi network has latency spikes.
      - If **Avg Loss** is $> 1.0\%$, move the WiFi router closer to the capture area or switch to an unoccupied 2.4 GHz channel (channels 1, 6, or 11).
   2. Check for interference from Bluetooth devices or microwave ovens operating on 2.4 GHz.
+
+---
+
+## 7. ESP-12E / ESP8266 Specific Troubleshooting
+
+### Flashing Fails with `Invalid head of packet (0xE0)`
+- **Symptom**: `esptool.py` fails during upload at 921,600 baud with packet errors.
+- **Cause**: Cheap CH340 or CP2102 USB-to-UART bridge chips on NodeMCU/ESP-12E boards cannot sustain 921,600 baud without bit corruption.
+- **Fix**: Flash at 115,200 baud (configured in `platformio.ini` as `upload_speed = 115200`). Both the Web Serial flasher and PlatformIO upload use 115,200 baud for ESP-12E.
+
+### Garbled Characters in Serial Monitor
+- **Symptom**: Serial monitor displays `?` or gibberish.
+- **Cause**: Baud rate mismatch. The ESP-12E runtime Serial CLI runs at **9600 bps** (as specified on board silkscreen), while the ESP32-C6 runs at 115,200 bps.
+- **Fix**: Open the serial monitor at 9600 baud:
+  ```bash
+  pio device monitor -d firmware -e esp12e -b 9600
+  ```
+
+### ESP-12E Boot Loop / Fails to Boot into Firmware
+- **Cause**: Hardware strapping pin violation during reset:
+  - If **GPIO 15** is pulled HIGH externally, the ESP8266 attempts an SDIO boot and hangs. GPIO 15 must be pulled LOW to GND.
+  - If **GPIO 0** or **GPIO 2** are pulled LOW externally during reset, the ESP8266 enters UART download mode.
+- **Fix**: Ensure strapping pins are not pulled to conflicting logic levels during power-on. BNO085 lines should be wired to GPIO 4 (SDA) and GPIO 5 (SCL), leaving GPIO 0, 2, and 15 free of conflicting pull-ups/pull-downs.
+
+### High Dropped Sample Count on ESP-12E Heartbeat
+- **Symptom**: Dashboard card shows increasing `dropped_samples` for ESP-12E tracker.
+- **Cause**: The ESP8266 has limited free heap (~45 KB). If the WiFi network suffers transient disconnection, the 120-sample ring buffer fills up and drops oldest frames to prevent out-of-memory kernel panics.
+- **Fix**:
+  1. Improve WiFi signal strength or reduce router congestion.
+  2. Keep WebSocket stream loop non-blocking (cooperative scheduler handles this automatically).
+
