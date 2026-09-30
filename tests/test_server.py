@@ -247,3 +247,8 @@ def test_websocket_stream_and_parquet_export():
     assert "accel_x" in table.column_names
     assert len(table) == 2
     assert table["recording_id"][0].as_py() == recording_id
+
+    # Clean active connections and mock roles
+    tracker_manager.active_connections.clear()
+    tracker_manager.role_to_device.clear()
+    tracker_manager.active_session_id = None

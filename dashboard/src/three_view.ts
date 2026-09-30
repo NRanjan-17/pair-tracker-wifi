@@ -21,6 +21,10 @@ export class ThreeVisualizer {
   public onLatencyUpdate?: (latencyMs: number) => void;
   public onFpsUpdate?: (fps: number) => void;
 
+  // Playback mode state
+  public isPlaybackMode: boolean = false;
+  public playbackPoses: Map<string, { quat: THREE.Quaternion; isOnline: boolean }> = new Map();
+
   private frameCount = 0;
   private lastFpsCheck = performance.now();
 
@@ -199,40 +203,45 @@ export class ThreeVisualizer {
 
     const nowPerf = performance.now();
 
-    // 1. Gather slerp-interpolated quaternions from jitter buffer for each bone
-    const boneSensors = new Map<string, { quat: THREE.Quaternion; isOnline: boolean }>();
-    let totalLatency = 0;
-    let latencyCount = 0;
+    if (this.isPlaybackMode) {
+      // In playback mode, poses are driven directly by PlaybackController
+      this.avatar.updatePoses(this.playbackPoses);
+    } else {
+      // 1. Gather slerp-interpolated quaternions from jitter buffer for each bone
+      const boneSensors = new Map<string, { quat: THREE.Quaternion; isOnline: boolean }>();
+      let totalLatency = 0;
+      let latencyCount = 0;
 
-    for (const bone of this.avatar.skeleton.bones) {
-      const interp = this.jitterBuffer.getInterpolatedQuaternion(bone.name, nowPerf);
-      if (interp) {
-        boneSensors.set(bone.name, {
-          quat: interp.quat,
-          isOnline: interp.isOnline,
-        });
+      for (const bone of this.avatar.skeleton.bones) {
+        const interp = this.jitterBuffer.getInterpolatedQuaternion(bone.name, nowPerf);
+        if (interp) {
+          boneSensors.set(bone.name, {
+            quat: interp.quat,
+            isOnline: interp.isOnline,
+          });
 
-        if (interp.isOnline) {
-          totalLatency += interp.latencyMs;
-          latencyCount++;
+          if (interp.isOnline) {
+            totalLatency += interp.latencyMs;
+            latencyCount++;
+          }
+        } else {
+          boneSensors.set(bone.name, {
+            quat: new THREE.Quaternion(0, 0, 0, 1),
+            isOnline: false,
+          });
         }
-      } else {
-        boneSensors.set(bone.name, {
-          quat: new THREE.Quaternion(0, 0, 0, 1),
-          isOnline: false,
-        });
       }
-    }
 
-    // 2. Drive avatar with hierarchical forward kinematics:
-    // Bone rotation = inverse(parent world rotation) * child world rotation, after offsets
-    this.avatar.updatePoses(boneSensors);
+      // 2. Drive avatar with hierarchical forward kinematics:
+      // Bone rotation = inverse(parent world rotation) * child world rotation, after offsets
+      this.avatar.updatePoses(boneSensors);
 
-    // 3. Update measured latency
-    if (latencyCount > 0) {
-      this.currentLatencyMs = Math.round(totalLatency / latencyCount);
-      if (this.onLatencyUpdate) {
-        this.onLatencyUpdate(this.currentLatencyMs);
+      // 3. Update measured latency
+      if (latencyCount > 0) {
+        this.currentLatencyMs = Math.round(totalLatency / latencyCount);
+        if (this.onLatencyUpdate) {
+          this.onLatencyUpdate(this.currentLatencyMs);
+        }
       }
     }
 

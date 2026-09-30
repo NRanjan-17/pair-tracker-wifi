@@ -241,12 +241,85 @@ async def end_session(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
+@app.get("/v1/sessions")
+async def list_sessions():
+    return db.get_all_sessions()
+
 @app.get("/v1/sessions/{session_id}")
 async def get_session(session_id: str):
     sess = db.get_session(session_id)
     if not sess:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return sess
+
+@app.get("/v1/sessions/{session_id}/data")
+async def get_session_data(session_id: str):
+    sess = db.get_session(session_id)
+    if not sess:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    parquet_path = Path(sess["parquet_path"])
+    if not parquet_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parquet file not found")
+
+    import pyarrow.parquet as pq
+    table = pq.read_table(str(parquet_path))
+    pydict = table.to_pydict()
+
+    count = len(pydict["time_ms"])
+    if count == 0:
+        return {
+            "session_id": session_id,
+            "recording_id": sess["recording_id"],
+            "name": sess["name"],
+            "status": sess["status"],
+            "started_at": sess["started_at"],
+            "ended_at": sess["ended_at"],
+            "total_samples": 0,
+            "duration_ms": 0,
+            "roles": [],
+            "samples": [],
+        }
+
+    times = pydict["time_ms"]
+    min_time = min(times)
+    max_time = max(times)
+    duration_ms = max(0, max_time - min_time)
+    roles = sorted(list(set(pydict["role"])))
+
+    samples = []
+    for i in range(count):
+        t_rel = times[i] - min_time
+        samples.append({
+            "t_ms": t_rel,
+            "role": pydict["role"][i],
+            "seq": int(pydict["seq"][i]),
+            "quat": [
+                float(pydict["quat_w"][i]),
+                float(pydict["quat_x"][i]),
+                float(pydict["quat_y"][i]),
+                float(pydict["quat_z"][i]),
+            ],
+            "accel": [
+                float(pydict["accel_x"][i]) if pydict["accel_x"][i] is not None else 0.0,
+                float(pydict["accel_y"][i]) if pydict["accel_y"][i] is not None else 0.0,
+                float(pydict["accel_z"][i]) if pydict["accel_z"][i] is not None else 0.0,
+            ] if pydict["accel_x"][i] is not None else None,
+        })
+
+    samples.sort(key=lambda s: s["t_ms"])
+
+    return {
+        "session_id": session_id,
+        "recording_id": sess["recording_id"],
+        "name": sess["name"],
+        "status": sess["status"],
+        "started_at": sess["started_at"],
+        "ended_at": sess["ended_at"],
+        "total_samples": count,
+        "duration_ms": duration_ms,
+        "roles": roles,
+        "samples": samples,
+    }
 
 @app.get("/v1/sessions/{session_id}/export")
 async def export_session(session_id: str):

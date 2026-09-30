@@ -404,6 +404,30 @@ End the current recording session and finalize the Parquet file.
 
 ---
 
+---
+
+#### `GET /v1/sessions`
+List all recorded sessions stored in the SQLite database, ordered by start time descending.
+
+- **Response** (`200 OK`):
+  ```json
+  [
+    {
+      "session_id": "sess_8f2b3e81-2856-42bb-85bb-65231c5187cb",
+      "recording_id": "rec_1727670020",
+      "name": "Squat Trial 01",
+      "description": "Athlete performing 10 reps",
+      "status": "completed",
+      "started_at": 1727670020000,
+      "ended_at": 1727670140000,
+      "total_samples": 5760,
+      "parquet_path": "sessions_data/sess_8f2b3e81-2856-42bb-85bb-65231c5187cb.parquet"
+    }
+  ]
+  ```
+
+---
+
 #### `GET /v1/sessions/{id}`
 Retrieve metadata, sample counts, and loss statistics for a session.
 
@@ -420,6 +444,42 @@ Retrieve metadata, sample counts, and loss statistics for a session.
     "loss_stats": {
       "chest": { "samples": 5760, "dropped": 2, "loss_pct": 0.035 }
     }
+  }
+  ```
+
+---
+
+#### `GET /v1/sessions/{id}/data`
+Extract and return motion capture time-series samples directly from the session's Apache Parquet file for 3D viewport playback and scrubbing. Timestamps are normalized to relative milliseconds (`t_ms = 0` at recording start).
+
+- **Response** (`200 OK`):
+  ```json
+  {
+    "session_id": "sess_8f2b3e81-2856-42bb-85bb-65231c5187cb",
+    "recording_id": "rec_1727670020",
+    "name": "Squat Trial 01",
+    "status": "completed",
+    "started_at": 1727670020000,
+    "ended_at": 1727670140000,
+    "total_samples": 5760,
+    "duration_ms": 120000,
+    "roles": ["chest", "left_thigh", "right_thigh"],
+    "samples": [
+      {
+        "t_ms": 0,
+        "role": "chest",
+        "seq": 100,
+        "quat": [0.9998, 0.0012, -0.0145, 0.0032],
+        "accel": [0.05, 9.81, 0.12]
+      },
+      {
+        "t_ms": 20,
+        "role": "chest",
+        "seq": 101,
+        "quat": [0.9997, 0.0014, -0.0148, 0.0033],
+        "accel": [0.06, 9.80, 0.11]
+      }
+    ]
   }
   ```
 

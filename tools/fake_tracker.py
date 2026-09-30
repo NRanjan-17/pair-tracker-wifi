@@ -72,6 +72,9 @@ class SimulatedTracker:
     def current_synced_time_ms(self) -> int:
         return self.local_millis() + self.server_time_offset_ms
 
+    def stop(self):
+        self.running = False
+
     async def announce(self) -> bool:
         announce_url = f"{self.server_url}/v1/devices/announce"
         payload = {

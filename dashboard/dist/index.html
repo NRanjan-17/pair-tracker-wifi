@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Eidon Tracker WiFi — Live Dashboard</title>
-    <script type="module" crossorigin src="/assets/index-D5CY7tiT.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DsCpTW9F.css">
+    <title>Eidon Tracker WiFi — Live Dashboard & Recording</title>
+    <script type="module" crossorigin src="/assets/index-BvG4UnLw.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CgEPBI1K.css">
   </head>
   <body>
     <div id="app">
@@ -16,41 +16,78 @@
         </div>
         <div class="header-actions">
           <div id="wsBadge" class="badge badge-disconnected">Connecting...</div>
+
+          <!-- Session Recording Bar -->
           <div class="session-bar">
+            <div id="recTimer" class="rec-timer" style="display: none;">00:00:00</div>
             <span id="sessionStatus" class="session-label">No Active Session</span>
             <input type="text" id="sessionNameInput" placeholder="Session Name (e.g. Trial 1)" />
-            <button id="btnStartSession" class="btn btn-primary">Start Session</button>
-            <button id="btnEndSession" class="btn btn-danger" style="display: none;">End Session</button>
+            <button id="btnStartSession" class="btn btn-rec">
+              <span class="rec-dot-icon">●</span> <span id="btnRecText">REC</span>
+            </button>
+            <button id="btnEndSession" class="btn btn-danger" style="display: none;">
+              ⏹ Stop
+            </button>
           </div>
         </div>
       </header>
 
+      <!-- Active Recording Loss Banner -->
+      <div id="recordingBanner" class="recording-banner" style="display: none;">
+        <div class="rec-indicator-group">
+          <span class="pulsing-rec-dot"></span>
+          <span class="rec-title">RECORDING IN PROGRESS: <strong id="recBannerName">Session</strong></span>
+          <span id="recBannerTimer" class="rec-banner-timer">00:00:00</span>
+        </div>
+        <div id="recBannerLoss" class="rec-banner-loss">Per-device loss: Loading...</div>
+      </div>
+
       <main class="dashboard-body">
-        <!-- Left: Device Panel (Required Roles Cards) -->
-        <section class="panel-devices">
-          <div class="panel-header">
-            <h2>Required Body Roles</h2>
-            <div id="roleSummary" class="roles-summary-badge">0 / 0 Online</div>
-          </div>
-          <p class="panel-desc">All required roles must be online to initiate recording.</p>
-          <div id="requiredRolesContainer" class="cards-grid">
-            <!-- Populated dynamically -->
+        <!-- Left Panel: Tabs for Live Trackers vs Recorded Sessions -->
+        <section class="panel-left">
+          <div class="panel-tabs">
+            <button id="tabTrackers" class="tab-btn active">📡 Live Trackers</button>
+            <button id="tabSessions" class="tab-btn">📁 Recorded Sessions (<span id="sessionCountBadge">0</span>)</button>
           </div>
 
-          <div id="extraDevicesSection" style="display: none; margin-top: 24px;">
+          <!-- Tab View 1: Live Trackers -->
+          <div id="viewTrackers" class="tab-content active">
             <div class="panel-header">
-              <h3>Additional Devices</h3>
+              <h2>Required Body Roles</h2>
+              <div id="roleSummary" class="roles-summary-badge">0 / 0 Online</div>
             </div>
-            <div id="extraDevicesContainer" class="cards-grid"></div>
+            <p class="panel-desc">All required roles must be online to initiate recording.</p>
+            <div id="requiredRolesContainer" class="cards-grid">
+              <!-- Populated dynamically -->
+            </div>
+
+            <div id="extraDevicesSection" style="display: none; margin-top: 24px;">
+              <div class="panel-header">
+                <h3>Additional Devices</h3>
+              </div>
+              <div id="extraDevicesContainer" class="cards-grid"></div>
+            </div>
+          </div>
+
+          <!-- Tab View 2: Recorded Sessions -->
+          <div id="viewSessions" class="tab-content" style="display: none;">
+            <div class="panel-header">
+              <h2>Recorded Sessions</h2>
+              <button id="btnRefreshSessions" class="btn btn-sm btn-secondary">🔄 Refresh</button>
+            </div>
+            <p class="panel-desc">Parquet recordings stored on disk. Click Play to scrub in the 3D viewport.</p>
+            <div id="sessionsListContainer" class="sessions-list">
+              <div class="empty-sessions">No recorded sessions found. Press <strong>REC</strong> to capture your first session.</div>
+            </div>
           </div>
         </section>
 
-        <!-- Right: 3D Visualizer & Live Pose Telemetry -->
+        <!-- Right Panel: 3D Visualizer & Telemetry -->
         <section class="panel-viewport">
           <div class="viewport-header">
             <div class="viewport-title">
-              <h2>3D Biomechanical Avatar</h2>
-              <span class="subtle">Live Quaternion Forward Kinematics (Three.js)</span>
+              <h2 id="viewportHeaderTitle">3D Biomechanical Avatar</h2>
+              <span id="viewportHeaderSub" class="subtle">Live Quaternion Forward Kinematics (Three.js)</span>
             </div>
             <div class="viewport-controls">
               <span id="calibBadge" class="badge-calib badge-calib-pending">Needs N-Pose Calib</span>
@@ -60,8 +97,33 @@
             </div>
           </div>
 
+          <!-- Three.js Canvas Container -->
           <div id="threeContainer" class="canvas-wrapper"></div>
 
+          <!-- Playback Toolbar Overlay (in 3D Viewport) -->
+          <div id="playbackOverlay" class="playback-bar" style="display: none;">
+            <div class="playback-header">
+              <div class="playback-title">
+                <span class="playback-tag">📼 PLAYBACK</span>
+                <span id="playbackSessionName" class="playback-name">Session Name</span>
+              </div>
+              <button id="btnExitPlayback" class="btn btn-sm btn-danger" title="Exit playback and return to live stream">✕ Exit Playback</button>
+            </div>
+            <div class="playback-controls">
+              <button id="btnPlayPause" class="btn btn-sm btn-primary btn-play">▶ Play</button>
+              <input type="range" id="playbackScrubber" class="playback-slider" min="0" max="1000" step="10" value="0" />
+              <span id="playbackTimeDisplay" class="playback-time">00:00.0 / 00:00.0</span>
+              <div class="playback-speeds">
+                <button class="btn-speed" data-speed="0.25">0.25x</button>
+                <button class="btn-speed" data-speed="0.5">0.5x</button>
+                <button class="btn-speed active" data-speed="1.0">1x</button>
+                <button class="btn-speed" data-speed="1.5">1.5x</button>
+                <button class="btn-speed" data-speed="2.0">2x</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Telemetry Bar -->
           <div class="telemetry-bar">
             <div class="telemetry-item highlight">
               <span class="lbl">End-to-End Latency</span>
@@ -90,6 +152,27 @@
           </div>
         </section>
       </main>
+
+      <!-- Missing Roles Alert Modal -->
+      <div id="missingRolesModal" class="modal-backdrop" style="display: none;">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3>⚠️ Cannot Start Recording</h3>
+            <button id="btnCloseModal" class="btn-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p>The following required body tracker roles are currently missing or offline:</p>
+            <ul id="missingRolesList" class="missing-roles-list">
+              <!-- Dynamically inserted -->
+            </ul>
+            <p class="modal-hint">Every required tracker defined in <code>roles.yaml</code> must be powered on, joined to WiFi, and streaming before recording can start.</p>
+          </div>
+          <div class="modal-footer">
+            <button id="btnAcknowledgeModal" class="btn btn-primary">Understood</button>
+          </div>
+        </div>
+      </div>
+
     </div>
 
   </body>

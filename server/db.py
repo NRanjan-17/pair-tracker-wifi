@@ -125,4 +125,10 @@ class Database:
                 return dict(row)
             return None
 
+    def get_all_sessions(self) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM sessions ORDER BY started_at DESC")
+            return [dict(row) for row in cursor.fetchall()]
+
 db = Database()
