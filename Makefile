@@ -1,0 +1,30 @@
+.PHONY: help install test run-server run-fake clean pio-build
+
+help:
+	@echo "Available commands:"
+	@echo "  make install     Install Python dependencies in virtualenv"
+	@echo "  make test        Run pytest test suite"
+	@echo "  make run-server  Start local FastAPI server on port 8000"
+	@echo "  make run-fake    Run fake tracker simulation"
+	@echo "  make pio-build   Build PlatformIO firmware"
+	@echo "  make clean       Remove temporary files"
+
+install:
+	python3 -m venv .venv
+	. .venv/bin/activate && pip install -r requirements.txt
+
+test:
+	. .venv/bin/activate && pytest -v
+
+run-server:
+	. .venv/bin/activate && uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+
+run-fake:
+	. .venv/bin/activate && python3 tools/fake_tracker.py --server http://localhost:8000 --roles required
+
+pio-build:
+	cd firmware && pio run
+
+clean:
+	rm -rf .pytest_cache __pycache__ server/__pycache__ tools/__pycache__ tests/__pycache__
+	rm -rf data sessions_data
