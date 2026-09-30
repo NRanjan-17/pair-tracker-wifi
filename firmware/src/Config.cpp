@@ -1,6 +1,7 @@
 #include "Config.h"
 
-#define PREFS_NAMESPACE "eidon_cfg"
+#define PREFS_NAMESPACE "pair_cfg"
+#define PREFS_NAMESPACE_LEGACY "eidon_cfg"
 
 TrackerConfig config;
 
@@ -15,6 +16,31 @@ bool TrackerConfig::begin() {
     serverPort = prefs.getUShort("port", 8000);
     deviceToken = prefs.getString("token", "");
     role = static_cast<TrackerRole>(prefs.getUChar("role", 0));
+
+    // If pair_cfg has no SSID, check legacy eidon_cfg for automatic migration
+    if (ssid.length() == 0) {
+        Preferences legacyPrefs;
+        if (legacyPrefs.begin(PREFS_NAMESPACE_LEGACY, true)) {
+            String legacySsid = legacyPrefs.getString("ssid", "");
+            if (legacySsid.length() > 0) {
+                ssid = legacySsid;
+                password = legacyPrefs.getString("pass", "");
+                serverHost = legacyPrefs.getString("server", "pair.local");
+                serverPort = legacyPrefs.getUShort("port", 8000);
+                deviceToken = legacyPrefs.getString("token", "");
+                role = static_cast<TrackerRole>(legacyPrefs.getUChar("role", 0));
+
+                // Save into pair_cfg
+                prefs.putString("ssid", ssid);
+                prefs.putString("pass", password);
+                prefs.putString("server", serverHost);
+                prefs.putUShort("port", serverPort);
+                prefs.putString("token", deviceToken);
+                prefs.putUChar("role", static_cast<uint8_t>(role));
+            }
+            legacyPrefs.end();
+        }
+    }
     return true;
 }
 

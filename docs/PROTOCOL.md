@@ -655,7 +655,7 @@ set role <role_name>
 show
 reboot
 ```
-All parameters are stored in ESP32 NVS under namespace `eidon_cfg`. No secrets are kept in source code.
+All parameters are stored in ESP32 NVS under namespace `pair_cfg` (with automatic migration from legacy `eidon_cfg`). No secrets are kept in source code.
 
 ### 7.3 Web Serial Flashing & Browser Provisioning (`esptool-js`)
 
