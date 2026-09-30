@@ -252,6 +252,23 @@ export class AvatarRig {
   }
 
   /**
+   * Returns current pose calibration offsets (including reZeroYaw) as serializable map:
+   * role -> [x, y, z, w].
+   */
+  public getCalibrationOffsets(): Record<string, [number, number, number, number]> | null {
+    if (!this.isCalibrated || this.calibOffsets.size === 0) {
+      return null;
+    }
+    const result: Record<string, [number, number, number, number]> = {};
+    this.calibOffsets.forEach((offset, role) => {
+      // Effective offset = reZeroYawOffset * offset
+      const eff = this.reZeroYawOffset.clone().multiply(offset).normalize();
+      result[role] = [eff.x, eff.y, eff.z, eff.w];
+    });
+    return result;
+  }
+
+  /**
    * Get calibrated world rotation for a given role:
    * Q_world = Q_reZero * (Q_offset * Q_sensor)
    */

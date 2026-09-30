@@ -28,6 +28,7 @@ class DashboardApp {
 
   // Sessions cache
   private sessionsList: any[] = [];
+  private exportSessionId: string | null = null;
 
   constructor() {
     this.initVisualizer();
@@ -172,6 +173,14 @@ class DashboardApp {
     };
     if (btnCloseModal) btnCloseModal.addEventListener('click', closeModal);
     if (btnAckModal) btnAckModal.addEventListener('click', closeModal);
+
+    // Export Modal listeners
+    const btnCloseExport = document.getElementById('btnCloseExportModal');
+    const btnCancelExport = document.getElementById('btnCancelExport');
+    const btnConfirmExport = document.getElementById('btnConfirmExportDownload');
+    if (btnCloseExport) btnCloseExport.addEventListener('click', () => this.closeExportModal());
+    if (btnCancelExport) btnCancelExport.addEventListener('click', () => this.closeExportModal());
+    if (btnConfirmExport) btnConfirmExport.addEventListener('click', () => this.triggerExportDownload());
 
     // Playback bar controls
     const btnPlayPause = document.getElementById('btnPlayPause');
@@ -450,6 +459,13 @@ class DashboardApp {
     const input = document.getElementById('sessionNameInput') as HTMLInputElement;
     const name = input.value.trim() || `Session ${new Date().toLocaleTimeString()}`;
 
+    // Get current pose calibration offsets (if calibrated)
+    const calibOffsets = this.visualizer.getCalibrationOffsets();
+    const payload: any = { name };
+    if (calibOffsets) {
+      payload.calibration_offsets = calibOffsets;
+    }
+
     try {
       const res = await fetch('/v1/sessions', {
         method: 'POST',
@@ -457,7 +473,7 @@ class DashboardApp {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${ADMIN_TOKEN}`,
         },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -620,14 +636,76 @@ class DashboardApp {
           <button class="btn btn-primary btn-sm" onclick="window.dashboardApp.loadSessionPlayback('${sess.session_id}')">
             ▶ Play in 3D
           </button>
-          <a class="btn btn-secondary btn-sm" href="/v1/sessions/${sess.session_id}/export" target="_blank" download>
-            ⬇ Parquet
-          </a>
+          <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.openExportModal('${sess.session_id}')">
+            ⤓ Export
+          </button>
         </div>
       `;
 
       container.appendChild(card);
     }
+  }
+
+  public openExportModal(sessionId: string) {
+    this.exportSessionId = sessionId;
+    const sess = this.sessionsList.find((s) => s.session_id === sessionId);
+    const modal = document.getElementById('exportMocapModal');
+    if (!modal) return;
+
+    const nameEl = document.getElementById('exportModalSessionName');
+    const idEl = document.getElementById('exportModalSessionId');
+    const calibStatusEl = document.getElementById('exportCalibStatus');
+    const uncalibWarn = document.getElementById('exportUncalibWarning');
+
+    if (nameEl) nameEl.innerText = sess ? sess.name : 'Session';
+    if (idEl) idEl.innerText = sessionId;
+
+    // Check if session has calibration offsets
+    const hasCalib = Boolean(
+      sess &&
+      sess.metadata &&
+      sess.metadata.calibration_offsets &&
+      Object.keys(sess.metadata.calibration_offsets).length > 0
+    );
+
+    if (calibStatusEl) {
+      if (hasCalib) {
+        calibStatusEl.innerHTML = `<span class="badge-calib badge-calib-done">✓ Pose Calibrated</span> <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.4rem;">Offsets stored at recording start</span>`;
+        if (uncalibWarn) uncalibWarn.style.display = 'none';
+      } else {
+        calibStatusEl.innerHTML = `<span class="badge-calib badge-calib-pending">⚠️ No Calibration</span> <span style="font-size: 0.75rem; color: #f87171; margin-left: 0.4rem;">Recorded without N-pose calibration</span>`;
+        if (uncalibWarn) uncalibWarn.style.display = 'block';
+      }
+    }
+
+    modal.style.display = 'flex';
+  }
+
+  public closeExportModal() {
+    const modal = document.getElementById('exportMocapModal');
+    if (modal) modal.style.display = 'none';
+    this.exportSessionId = null;
+  }
+
+  public triggerExportDownload() {
+    if (!this.exportSessionId) return;
+
+    const formatEl = document.querySelector('input[name="exportFormat"]:checked') as HTMLInputElement;
+    const format = formatEl ? formatEl.value : 'bvh';
+
+    const rateInput = document.getElementById('exportRateInput') as HTMLInputElement;
+    const rate = rateInput ? parseFloat(rateInput.value) || 30 : 30;
+
+    const exportUrl = `/v1/sessions/${this.exportSessionId}/export?format=${format}&rate=${rate}&allow_uncalibrated=true`;
+
+    const a = document.createElement('a');
+    a.href = exportUrl;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    this.closeExportModal();
   }
 
   public async loadSessionPlayback(sessionId: string) {

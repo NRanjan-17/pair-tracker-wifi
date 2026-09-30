@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import time
 from typing import Any, Dict, List, Optional
@@ -37,9 +38,15 @@ class Database:
                 started_at INTEGER NOT NULL,
                 ended_at INTEGER,
                 total_samples INTEGER DEFAULT 0,
-                parquet_path TEXT DEFAULT ''
+                parquet_path TEXT DEFAULT '',
+                metadata_json TEXT DEFAULT '{}'
             )
             """)
+            # Ensure metadata_json exists on pre-existing tables
+            try:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN metadata_json TEXT DEFAULT '{}'")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     # Device Operations
@@ -83,29 +90,68 @@ class Database:
 
     # Session Operations
     def create_session(
-        self, session_id: str, recording_id: str, name: str, description: str, parquet_path: str
+        self,
+        session_id: str,
+        recording_id: str,
+        name: str,
+        description: str,
+        parquet_path: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         now = int(time.time() * 1000)
+        meta_str = json.dumps(metadata or {})
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-            INSERT INTO sessions (session_id, recording_id, name, description, status, started_at, parquet_path)
-            VALUES (?, ?, ?, ?, 'active', ?, ?)
-            """, (session_id, recording_id, name, description, now, parquet_path))
+            INSERT INTO sessions (session_id, recording_id, name, description, status, started_at, parquet_path, metadata_json)
+            VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+            """, (session_id, recording_id, name, description, now, parquet_path, meta_str))
             conn.commit()
         return self.get_session(session_id)
 
-    def end_session(self, session_id: str, total_samples: int) -> Optional[Dict[str, Any]]:
+    def end_session(
+        self,
+        session_id: str,
+        total_samples: int,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
         now = int(time.time() * 1000)
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-            UPDATE sessions
-            SET status = 'completed', ended_at = ?, total_samples = ?
-            WHERE session_id = ?
-            """, (now, total_samples, session_id))
+            if metadata is not None:
+                meta_str = json.dumps(metadata)
+                cursor.execute("""
+                UPDATE sessions
+                SET status = 'completed', ended_at = ?, total_samples = ?, metadata_json = ?
+                WHERE session_id = ?
+                """, (now, total_samples, meta_str, session_id))
+            else:
+                cursor.execute("""
+                UPDATE sessions
+                SET status = 'completed', ended_at = ?, total_samples = ?
+                WHERE session_id = ?
+                """, (now, total_samples, session_id))
             conn.commit()
         return self.get_session(session_id)
+
+    def update_session_metadata(self, session_id: str, metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        meta_str = json.dumps(metadata)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE sessions SET metadata_json = ? WHERE session_id = ?", (meta_str, session_id))
+            conn.commit()
+        return self.get_session(session_id)
+
+    def _format_session_row(self, row: sqlite3.Row) -> Dict[str, Any]:
+        d = dict(row)
+        if "metadata_json" in d and d["metadata_json"]:
+            try:
+                d["metadata"] = json.loads(d["metadata_json"])
+            except Exception:
+                d["metadata"] = {}
+        else:
+            d["metadata"] = {}
+        return d
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         with self._get_connection() as conn:
@@ -113,7 +159,7 @@ class Database:
             cursor.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
             row = cursor.fetchone()
             if row:
-                return dict(row)
+                return self._format_session_row(row)
             return None
 
     def get_active_session(self) -> Optional[Dict[str, Any]]:
@@ -122,13 +168,13 @@ class Database:
             cursor.execute("SELECT * FROM sessions WHERE status = 'active' ORDER BY started_at DESC LIMIT 1")
             row = cursor.fetchone()
             if row:
-                return dict(row)
+                return self._format_session_row(row)
             return None
 
     def get_all_sessions(self) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM sessions ORDER BY started_at DESC")
-            return [dict(row) for row in cursor.fetchall()]
+            return [self._format_session_row(row) for row in cursor.fetchall()]
 
 db = Database()

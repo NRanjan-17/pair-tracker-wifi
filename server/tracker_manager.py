@@ -70,6 +70,7 @@ class TrackerManager:
         self.active_session_id: Optional[str] = None
         self.active_recording_id: Optional[str] = None
         self.active_session_name: Optional[str] = None
+        self.active_session_calibration_offsets: Optional[Dict[str, List[float]]] = None
         self.parquet_writer: Optional[SessionParquetWriter] = None
         self.session_started_ms: Optional[int] = None
 
@@ -288,7 +289,14 @@ class TrackerManager:
             self.dashboard_viewers.discard(ws)
 
     # Session Management
-    async def start_session(self, session_id: str, recording_id: str, name: str, description: str) -> Dict[str, Any]:
+    async def start_session(
+        self,
+        session_id: str,
+        recording_id: str,
+        name: str,
+        description: str,
+        calibration_offsets: Optional[Dict[str, List[float]]] = None,
+    ) -> Dict[str, Any]:
         if self.active_session_id:
             raise ValueError("A session is already active")
 
@@ -303,7 +311,17 @@ class TrackerManager:
         self.active_session_id = session_id
         self.active_recording_id = recording_id
         self.active_session_name = name
+        self.active_session_calibration_offsets = calibration_offsets
         self.session_started_ms = int(time.time() * 1000)
+
+        # Initial metadata
+        initial_metadata = {
+            "session_id": session_id,
+            "recording_id": recording_id,
+            "name": name,
+            "calibration_offsets": calibration_offsets or {},
+            "roles": list(online_roles),
+        }
 
         # Record in DB
         db.create_session(
@@ -312,6 +330,7 @@ class TrackerManager:
             name=name,
             description=description,
             parquet_path=str(parquet_path),
+            metadata=initial_metadata,
         )
 
         # Broadcast 'start' command to all connected devices
@@ -335,6 +354,7 @@ class TrackerManager:
             "participating_devices": [
                 {"device_id": c.device_id, "role": c.role} for c in self.active_connections.values()
             ],
+            "calibration_offsets": calibration_offsets or {},
         }
 
         await self.broadcast_dashboard({"type": "session_started", "session": session_info})
@@ -364,7 +384,29 @@ class TrackerManager:
             parquet_path = str(self.parquet_writer.file_path)
             self.parquet_writer = None
 
-        db.end_session(cur_id, total_samples)
+        # Build session metadata
+        per_device_loss = {conn.role: conn.loss_pct for conn in self.active_connections.values()}
+        firmware_vers = {conn.role: conn.firmware_version for conn in self.active_connections.values()}
+        active_roles = list(self.get_online_roles())
+        metadata = {
+            "session_id": cur_id,
+            "recording_id": self.active_recording_id or "",
+            "name": self.active_session_name or "",
+            "calibration_offsets": self.active_session_calibration_offsets or {},
+            "per_device_loss_pct": per_device_loss,
+            "firmware_versions": firmware_vers,
+            "roles": active_roles,
+        }
+
+        db.end_session(cur_id, total_samples, metadata=metadata)
+
+        # Write initial metadata.json to sessions dir
+        metadata_file = SESSIONS_DIR / f"{cur_id}_metadata.json"
+        try:
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2)
+        except Exception:
+            pass
 
         ended_info = {
             "session_id": cur_id,
@@ -372,11 +414,13 @@ class TrackerManager:
             "ended_at": int(time.time() * 1000),
             "total_samples": total_samples,
             "parquet_path": parquet_path,
+            "metadata": metadata,
         }
 
         self.active_session_id = None
         self.active_recording_id = None
         self.active_session_name = None
+        self.active_session_calibration_offsets = None
         self.session_started_ms = None
 
         await self.broadcast_dashboard({"type": "session_ended", "session": ended_info})

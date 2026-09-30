@@ -7,12 +7,19 @@ from typing import Any, Dict, Optional
 import uuid
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from server.config import ADMIN_TOKEN, SERVER_HOST, SERVER_PORT
+from server.config import ADMIN_TOKEN, SERVER_HOST, SERVER_PORT, SESSIONS_DIR
 from server.db import db
 from server.mdns import mdns_service
+from server.mocap_exporter import (
+    MocapSessionProcessor,
+    build_metadata_json,
+    generate_bvh,
+    generate_csv,
+    generate_parquet,
+)
 from server.parquet_writer import SessionParquetWriter
 from server.protocol import DataFrame, decode_frame
 from server.roles import roles_registry
@@ -100,6 +107,7 @@ class DeviceAnnounceRequest(BaseModel):
 class SessionCreateRequest(BaseModel):
     name: Optional[str] = "Tracking Session"
     description: Optional[str] = ""
+    calibration_offsets: Optional[Dict[str, Any]] = None
 
 class DeviceCommandRequest(BaseModel):
     type: str
@@ -266,6 +274,7 @@ async def start_session(
             recording_id=recording_id,
             name=payload.name or "Session",
             description=payload.description or "",
+            calibration_offsets=payload.calibration_offsets,
         )
         return session_info
     except ValueError as e:
@@ -363,18 +372,104 @@ async def get_session_data(session_id: str):
     }
 
 @app.get("/v1/sessions/{session_id}/export")
-async def export_session(session_id: str):
+async def export_session(
+    session_id: str,
+    format: Optional[str] = Query(None, pattern="^(bvh|csv|parquet|json)$"),
+    rate: float = Query(30.0, ge=1.0, le=120.0),
+    allow_uncalibrated: bool = Query(True),
+    layout: str = Query("tall", pattern="^(tall|wide)$"),
+):
     sess = db.get_session(session_id)
     if not sess:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     parquet_path = Path(sess["parquet_path"])
     if not parquet_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parquet file not found")
-    return FileResponse(
-        path=parquet_path,
-        media_type="application/vnd.apache.parquet",
-        filename=f"{session_id}.parquet",
+
+    # If format is not specified, maintain backwards-compatible download of raw session recording dataset
+    if format is None:
+        return FileResponse(
+            path=parquet_path,
+            media_type="application/vnd.apache.parquet",
+            filename=f"{session_id}.parquet",
+        )
+
+    session_meta = sess.get("metadata", {})
+    calib_offsets = session_meta.get("calibration_offsets")
+
+    if not calib_offsets and not allow_uncalibrated:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session has no pose calibration. Provide allow_uncalibrated=true to export anyway.",
+        )
+
+    # Process samples: calibrate, resample at specified rate, detect gaps
+    processor = MocapSessionProcessor(
+        parquet_path=parquet_path,
+        calibration_offsets=calib_offsets,
+        rate=rate,
     )
+    processor.process()
+
+    # Build and write metadata.json
+    metadata = build_metadata_json(
+        processor=processor,
+        session=sess,
+        per_device_loss_pct=session_meta.get("per_device_loss_pct"),
+        firmware_versions=session_meta.get("firmware_versions"),
+    )
+    # Save metadata.json in sessions dir
+    metadata_file = SESSIONS_DIR / f"{session_id}_metadata.json"
+    try:
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+    except Exception:
+        pass
+    db.update_session_metadata(session_id, metadata)
+
+    if format == "json":
+        return JSONResponse(content=metadata)
+
+    if format == "bvh":
+        bvh_str = generate_bvh(processor, session_id=session_id)
+        return Response(
+            content=bvh_str,
+            media_type="text/plain",
+            headers={"Content-Disposition": f'attachment; filename="{session_id}.bvh"'},
+        )
+
+    if format == "csv":
+        csv_str = generate_csv(processor, layout=layout)
+        return Response(
+            content=csv_str,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{session_id}.csv"'},
+        )
+
+    if format == "parquet":
+        out_parquet_path = SESSIONS_DIR / f"{session_id}_mocap_{int(rate)}hz_{layout}.parquet"
+        generate_parquet(processor, out_parquet_path, layout=layout)
+        return FileResponse(
+            path=out_parquet_path,
+            media_type="application/vnd.apache.parquet",
+            filename=f"{session_id}_mocap.parquet",
+        )
+
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported format")
+
+@app.get("/v1/sessions/{session_id}/metadata")
+async def get_session_metadata(session_id: str):
+    sess = db.get_session(session_id)
+    if not sess:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    metadata_file = SESSIONS_DIR / f"{session_id}_metadata.json"
+    if metadata_file.exists():
+        try:
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return sess.get("metadata", {})
 
 # WebSocket Endpoints
 @app.websocket("/v1/devices/{device_id}/stream")

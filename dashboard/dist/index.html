@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Eidon Tracker WiFi — Live Dashboard & Recording</title>
-    <script type="module" crossorigin src="/assets/index-U82dKO_K.js"></script>
+    <script type="module" crossorigin src="/assets/index-Ct1DqsxO.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-CvWl4_1D.css">
   </head>
   <body>
@@ -273,6 +273,59 @@
           </div>
           <div class="modal-footer">
             <button id="btnAcknowledgeModal" class="btn btn-primary">Understood</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Export Mocap Modal -->
+      <div id="exportMocapModal" class="modal-backdrop" style="display: none;">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3>⤓ Export Session Mocap</h3>
+            <button id="btnCloseExportModal" class="btn-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="export-session-title">
+              <span id="exportModalSessionName" style="font-weight: 700; color: var(--accent);">Session Name</span>
+              <span id="exportModalSessionId" style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem;">sess_...</span>
+            </div>
+
+            <!-- Calibration status indicator / warning -->
+            <div id="exportCalibStatus" style="margin-top: 0.8rem;"></div>
+
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="form-label" style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Export Format</label>
+              <div class="export-format-options" style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.4rem;">
+                <label class="radio-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                  <input type="radio" name="exportFormat" value="bvh" checked />
+                  <span><strong>BVH (.bvh)</strong> &mdash; Biovision Hierarchy (ZXY Euler, 3D mocap)</span>
+                </label>
+                <label class="radio-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                  <input type="radio" name="exportFormat" value="csv" />
+                  <span><strong>CSV (.csv)</strong> &mdash; Calibrated Quaternions (x, y, z, w)</span>
+                </label>
+                <label class="radio-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                  <input type="radio" name="exportFormat" value="parquet" />
+                  <span><strong>Parquet (.parquet)</strong> &mdash; Resampled Columnar Dataset</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="form-label" for="exportRateInput" style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Sampling Rate (Hz)</label>
+              <div style="display: flex; align-items: center; gap: 0.75rem; margin-top: 0.4rem;">
+                <input type="number" id="exportRateInput" class="form-input" min="1" max="120" value="30" style="width: 100px; padding: 0.4rem;" />
+                <span style="font-size: 0.75rem; color: var(--text-muted);">Default 30 Hz. Resamples every bone using quaternion slerp on synced clocks.</span>
+              </div>
+            </div>
+
+            <div id="exportUncalibWarning" class="alert-uncalib-warn" style="display: none; margin-top: 1rem; padding: 0.6rem 0.8rem; border-radius: 4px; background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); font-size: 0.78rem; color: #fca5a5;">
+              ⚠️ <strong>Warning:</strong> This session was recorded without pose calibration. The export will preserve raw sensor orientations without N-pose alignment.
+            </div>
+          </div>
+          <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.2rem;">
+            <button id="btnCancelExport" class="btn btn-secondary">Cancel</button>
+            <button id="btnConfirmExportDownload" class="btn btn-primary">⬇ Download Export</button>
           </div>
         </div>
       </div>

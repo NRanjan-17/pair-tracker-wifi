@@ -190,6 +190,10 @@ export class ThreeVisualizer {
     this.avatar.reZeroYaw(currentQuats);
   }
 
+  public getCalibrationOffsets(): Record<string, [number, number, number, number]> | null {
+    return this.avatar.getCalibrationOffsets();
+  }
+
   private onResize() {
     const width = this.container.clientWidth || 800;
     const height = this.container.clientHeight || 600;
