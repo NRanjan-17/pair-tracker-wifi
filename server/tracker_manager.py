@@ -402,14 +402,12 @@ class TrackerManager:
             else:
                 role_name = reg["role"]
                 cached = self.cached_announced_telemetry.get(dev_id, {})
-                cached_fw = reg.get("firmware_version") or cached.get("firmware_version") or "unknown"
-                if cached_fw == "unknown" and cached.get("firmware_version"):
-                    cached_fw = cached["firmware_version"]
-                cached_proto = reg.get("protocol_version") if reg.get("protocol_version") is not None else cached.get("protocol_version")
+                cached_fw = cached.get("firmware_version") or reg.get("firmware_version") or "unknown"
+                cached_proto = cached.get("protocol_version") if cached.get("protocol_version") is not None else reg.get("protocol_version")
                 if cached_proto is None:
                     cached_proto = 1
-                cached_batt = reg.get("battery_pct") if reg.get("battery_pct") is not None else cached.get("battery_pct")
-                cached_hw = reg.get("hw") or cached.get("hw") or "esp32c6"
+                cached_batt = cached.get("battery_pct") if cached.get("battery_pct") is not None else reg.get("battery_pct")
+                cached_hw = cached.get("hw") or reg.get("hw") or "esp32c6"
                 result.append({
                     "device_id": dev_id,
                     "role": role_name,
