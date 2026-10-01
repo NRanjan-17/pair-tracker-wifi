@@ -346,11 +346,9 @@ async def get_firmware_manifest(hw: Optional[str] = Query("esp32c6")):
     """
     if hw in ("esp12e", "esp8266"):
         # ESP-12E (ESP8266) single flat image flashed at 0x0
-        bin_file = FIRMWARE_BIN_DIR / "esp12e" / "firmware.bin"
-        if not bin_file.exists():
-            latest = get_latest_firmware_manifest(hw="esp12e")
-            if latest:
-                bin_file = FIRMWARE_BIN_DIR / "esp12e" / latest["version"] / "firmware.bin"
+        latest = get_latest_firmware_manifest(hw="esp12e")
+        latest_ver = latest["version"] if latest else "latest"
+        bin_file, _ = _find_firmware_bin(version="latest", hw="esp12e")
 
         parts = []
         if bin_file.exists():
@@ -365,11 +363,13 @@ async def get_firmware_manifest(hw: Optional[str] = Query("esp32c6")):
             "chip": "esp8266",
             "board": "esp12e",
             "baud": 9600,
-            "version": "1.0.0",
+            "version": latest_ver,
             "parts": parts,
         }
 
     # ESP32-C6 default layout
+    latest_c6 = get_latest_firmware_manifest(hw="esp32c6")
+    latest_c6_ver = latest_c6["version"] if latest_c6 else "latest"
     c6_dir = FIRMWARE_BIN_DIR / "esp32c6"
     base_dir = c6_dir if c6_dir.exists() and (c6_dir / "firmware.bin").exists() else FIRMWARE_BIN_DIR
 
@@ -381,6 +381,12 @@ async def get_firmware_manifest(hw: Optional[str] = Query("esp32c6")):
     ]
     available = []
     for part in manifest_parts:
+        if part["name"] == "firmware.bin":
+            bin_path, _ = _find_firmware_bin(version="latest", hw="esp32c6")
+            if bin_path.exists():
+                part["size"] = bin_path.stat().st_size
+                available.append(part)
+                continue
         file_path = base_dir / part["name"]
         if not file_path.exists() and base_dir != FIRMWARE_BIN_DIR:
             file_path = FIRMWARE_BIN_DIR / part["name"]
@@ -392,7 +398,7 @@ async def get_firmware_manifest(hw: Optional[str] = Query("esp32c6")):
         "chip": "esp32c6",
         "board": "seeed_xiao_esp32c6",
         "baud": 115200,
-        "version": "1.0.0",
+        "version": latest_c6_ver,
         "parts": available,
     }
 
@@ -615,8 +621,22 @@ async def announce_device(
         # Check token if header provided
         if authorization and authorization.startswith("Bearer "):
             token = authorization[7:].strip()
-            if existing["token"] and token != existing["token"]:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid device token")
+            if existing.get("token") and token and token != existing["token"]:
+                token_dev = db.get_device_by_token(token)
+                clean_req = payload.device_id.replace(":", "").replace("-", "").upper()
+                if not token_dev or token_dev["device_id"].replace(":", "").replace("-", "").upper() == clean_req:
+                    db.register_device(
+                        payload.device_id,
+                        payload.role if existing["role"] == "unassigned" else existing["role"],
+                        token,
+                        hw=payload.hw or existing.get("hw", "esp32c6"),
+                        flash_size=payload.flash_size or existing.get("flash_size", 0),
+                        free_heap=payload.free_heap or existing.get("free_heap", 0),
+                        firmware_version=payload.firmware_version or existing.get("firmware_version", "unknown"),
+                        protocol_version=payload.protocol_version or existing.get("protocol_version", 1),
+                    )
+                else:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid device token")
     else:
         # If not registered, auto-register with default or provided role
         token = authorization[7:].strip() if (authorization and authorization.startswith("Bearer ")) else "default_token"
@@ -959,22 +979,33 @@ async def device_stream_endpoint(
 
     # Verify device
     dev = db.get_device(device_id)
+    if not dev:
+        dev = db.register_device(
+            device_id=device_id,
+            role="unassigned",
+            token=bearer_token or f"tok_{uuid.uuid4().hex[:16]}",
+            hw="esp12e" if "12" in device_id.lower() else "esp32c6",
+        )
     role = dev["role"] if dev else "unassigned"
-    if dev and dev.get("token") and bearer_token:
-        if dev["token"] != bearer_token:
-            # Check if this token was issued to this same physical MAC (e.g. re-provisioned via Web Serial)
+
+    if dev and bearer_token:
+        if dev.get("token") and dev["token"] != bearer_token:
             token_dev = db.get_device_by_token(bearer_token)
             clean_req = device_id.replace(":", "").replace("-", "").upper()
-            if token_dev and token_dev["device_id"].replace(":", "").replace("-", "").upper() == clean_req:
+            if not token_dev or token_dev["device_id"].replace(":", "").replace("-", "").upper() == clean_req:
                 db.register_device(
                     device_id=device_id,
-                    role=token_dev.get("role", dev["role"]),
+                    role=dev["role"],
                     token=bearer_token,
-                    hw=token_dev.get("hw", dev.get("hw", "esp12e")),
+                    hw=dev.get("hw", "esp32c6"),
+                    flash_size=dev.get("flash_size", 0),
+                    free_heap=dev.get("free_heap", 0),
+                    firmware_version=dev.get("firmware_version", "unknown"),
+                    protocol_version=dev.get("protocol_version", 1),
                 )
                 dev = db.get_device(device_id)
                 role = dev["role"] if dev else "unassigned"
-            if dev and dev.get("token") and dev["token"] != bearer_token:
+            else:
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
                 return
 

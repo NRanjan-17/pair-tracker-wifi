@@ -117,6 +117,30 @@ class TrackerManager:
         self.ota_jobs: Dict[str, OTAJob] = {}
         self.device_to_ota_job: Dict[str, str] = {}  # device_id -> active job_id
 
+    @staticmethod
+    def _mac_variants(device_id: str) -> List[str]:
+        variants = [device_id]
+        mac_pair = db._normalize_mac(device_id)
+        if mac_pair:
+            clean, colon_mac = mac_pair
+            if clean not in variants:
+                variants.append(clean)
+            if colon_mac not in variants:
+                variants.append(colon_mac)
+        return variants
+
+    def find_active_connection(self, device_id: str) -> Optional[TrackerConnection]:
+        for var in self._mac_variants(device_id):
+            if var in self.active_connections:
+                return self.active_connections[var]
+        return None
+
+    def get_cached_announced_telemetry(self, device_id: str) -> Dict[str, Any]:
+        for var in self._mac_variants(device_id):
+            if var in self.cached_announced_telemetry:
+                return self.cached_announced_telemetry[var]
+        return {}
+
     def cache_announced_telemetry(
         self,
         device_id: str,
@@ -128,7 +152,7 @@ class TrackerManager:
         flash_size: Optional[int] = None,
         free_heap: Optional[int] = None,
     ):
-        cached = self.cached_announced_telemetry.get(device_id, {})
+        cached = self.get_cached_announced_telemetry(device_id).copy()
         if battery_pct is not None:
             cached["battery_pct"] = battery_pct
         if battery_mv is not None:
@@ -144,10 +168,11 @@ class TrackerManager:
         if free_heap is not None:
             cached["free_heap"] = free_heap
 
-        self.cached_announced_telemetry[device_id] = cached
+        for var in self._mac_variants(device_id):
+            self.cached_announced_telemetry[var] = cached
 
-        if device_id in self.active_connections:
-            conn = self.active_connections[device_id]
+        conn = self.find_active_connection(device_id)
+        if conn:
             if battery_pct is not None:
                 conn.battery_pct = battery_pct
             if battery_mv is not None:
@@ -168,13 +193,15 @@ class TrackerManager:
         job_id = f"job_ota_{uuid.uuid4().hex[:12]}"
         job = OTAJob(job_id=job_id, device_id=device_id, version=version)
         self.ota_jobs[job_id] = job
-        self.device_to_ota_job[device_id] = job_id
+        for var in self._mac_variants(device_id):
+            self.device_to_ota_job[var] = job_id
         return job
 
     def get_ota_job_for_device(self, device_id: str) -> Optional[OTAJob]:
-        job_id = self.device_to_ota_job.get(device_id)
-        if job_id:
-            return self.ota_jobs.get(job_id)
+        for var in self._mac_variants(device_id):
+            job_id = self.device_to_ota_job.get(var)
+            if job_id and job_id in self.ota_jobs:
+                return self.ota_jobs[job_id]
         return None
 
     def get_all_ota_jobs(self) -> List[Dict[str, Any]]:
@@ -216,15 +243,16 @@ class TrackerManager:
 
     async def connect_tracker(self, device_id: str, role: str, token: str, ws: WebSocket) -> TrackerConnection:
         # If another device is already streaming with this role, disconnect previous or reject
-        if role in self.role_to_device and self.role_to_device[role] != device_id:
+        if role != "unassigned" and role in self.role_to_device and self.role_to_device[role] != device_id:
             old_dev_id = self.role_to_device[role]
-            if old_dev_id in self.active_connections:
-                # Close older connection
+            old_conn = self.find_active_connection(old_dev_id)
+            if old_conn:
                 try:
-                    await self.active_connections[old_dev_id].ws.close(code=1000, reason="Replaced by new device for role")
+                    await old_conn.ws.close(code=1000, reason="Replaced by new device for role")
                 except Exception:
                     pass
-                del self.active_connections[old_dev_id]
+                for v in self._mac_variants(old_conn.device_id):
+                    self.active_connections.pop(v, None)
 
         conn = TrackerConnection(device_id=device_id, role=role, token=token, ws=ws)
         dev_row = db.get_device(device_id)
@@ -243,8 +271,8 @@ class TrackerManager:
             if dev_row.get("battery_pct") is not None:
                 conn.battery_pct = dev_row["battery_pct"]
 
-        if device_id in self.cached_announced_telemetry:
-            cached = self.cached_announced_telemetry[device_id]
+        cached = self.get_cached_announced_telemetry(device_id)
+        if cached:
             if cached.get("hw"):
                 conn.hw = cached["hw"]
             if cached.get("flash_size") is not None:
@@ -261,7 +289,8 @@ class TrackerManager:
                 conn.protocol_outdated = (conn.protocol_version < REQUIRED_PROTOCOL_VERSION)
 
         self.active_connections[device_id] = conn
-        self.role_to_device[role] = device_id
+        if role != "unassigned":
+            self.role_to_device[role] = device_id
         db.update_last_seen(device_id)
 
         # Notify dashboard
@@ -279,36 +308,40 @@ class TrackerManager:
         return conn
 
     async def set_device_role(self, device_id: str, new_role: str):
-        if device_id in self.active_connections:
-            conn = self.active_connections[device_id]
+        conn = self.find_active_connection(device_id)
+        if conn:
+            actual_id = conn.device_id
             old_role = conn.role
-            if old_role in self.role_to_device and self.role_to_device[old_role] == device_id:
+            if old_role != "unassigned" and old_role in self.role_to_device and self.role_to_device[old_role] == actual_id:
                 del self.role_to_device[old_role]
             conn.role = new_role
             conn.role_id = roles_registry.get_role_id(new_role) if roles_registry.is_valid_role(new_role) else 0
             if new_role != "unassigned":
-                self.role_to_device[new_role] = device_id
-            await self.send_command_to_device(device_id, {"type": "set_role", "role": new_role})
+                self.role_to_device[new_role] = actual_id
+            await self.send_command_to_device(actual_id, {"type": "set_role", "role": new_role})
             device_dict = conn.to_dict()
             await self.broadcast_dashboard({"type": "device_state", **device_dict})
             await self.broadcast_dashboard({
                 "type": "log",
                 "level": "info",
                 "category": "role",
-                "message": f"Role assigned: {device_id} ({conn.hw}) changed from '{old_role}' to '{new_role}'",
-                "device_id": device_id,
+                "message": f"Role assigned: {actual_id} ({conn.hw}) changed from '{old_role}' to '{new_role}'",
+                "device_id": actual_id,
                 "timestamp_ms": int(time.time() * 1000),
             })
 
     async def disconnect_tracker(self, device_id: str):
-        if device_id in self.active_connections:
-            conn = self.active_connections.pop(device_id)
-            if conn.role in self.role_to_device and self.role_to_device[conn.role] == device_id:
+        conn = self.find_active_connection(device_id)
+        if conn:
+            actual_id = conn.device_id
+            for v in self._mac_variants(actual_id):
+                self.active_connections.pop(v, None)
+            if conn.role != "unassigned" and conn.role in self.role_to_device and self.role_to_device[conn.role] == actual_id:
                 del self.role_to_device[conn.role]
-            await self.broadcast_dashboard({"type": "device_disconnected", "device_id": device_id, "role": conn.role})
+            await self.broadcast_dashboard({"type": "device_disconnected", "device_id": actual_id, "role": conn.role})
             await self.broadcast_dashboard({
                 "type": "device_state",
-                "device_id": device_id,
+                "device_id": actual_id,
                 "role": conn.role,
                 "role_id": conn.role_id,
                 "online": False,
@@ -328,20 +361,18 @@ class TrackerManager:
 
     async def unpair_device(self, device_id: str) -> bool:
         # 1. Close connection if online
-        if device_id in self.active_connections:
-            conn = self.active_connections[device_id]
+        conn = self.find_active_connection(device_id)
+        if conn:
             try:
                 await conn.ws.close(code=1000, reason="Device unpaired by administrator")
             except Exception:
                 pass
-            await self.disconnect_tracker(device_id)
+            await self.disconnect_tracker(conn.device_id)
 
-        # 2. Clear cached telemetry
-        self.cached_announced_telemetry.pop(device_id, None)
-        mac_pair = db._normalize_mac(device_id)
-        if mac_pair:
-            self.cached_announced_telemetry.pop(mac_pair[0], None)
-            self.cached_announced_telemetry.pop(mac_pair[1], None)
+        # 2. Clear cached telemetry & OTA jobs
+        for v in self._mac_variants(device_id):
+            self.cached_announced_telemetry.pop(v, None)
+            self.device_to_ota_job.pop(v, None)
 
         # 3. Delete from DB
         deleted = db.delete_device(device_id)
@@ -392,16 +423,19 @@ class TrackerManager:
         # Merges registered devices from DB with live connection states
         all_registered = db.get_all_devices()
         result = []
-        registered_ids = set()
+        registered_variants = set()
 
         for reg in all_registered:
             dev_id = reg["device_id"]
-            registered_ids.add(dev_id)
-            if dev_id in self.active_connections:
-                result.append(self.active_connections[dev_id].to_dict())
+            for v in self._mac_variants(dev_id):
+                registered_variants.add(v)
+
+            conn = self.find_active_connection(dev_id)
+            if conn:
+                result.append(conn.to_dict())
             else:
                 role_name = reg["role"]
-                cached = self.cached_announced_telemetry.get(dev_id, {})
+                cached = self.get_cached_announced_telemetry(dev_id)
                 cached_fw = cached.get("firmware_version") or reg.get("firmware_version") or "unknown"
                 cached_proto = cached.get("protocol_version") if cached.get("protocol_version") is not None else reg.get("protocol_version")
                 if cached_proto is None:
@@ -432,8 +466,10 @@ class TrackerManager:
                 })
 
         # Add any active devices that might not be registered yet
+        seen_active = set()
         for dev_id, conn in self.active_connections.items():
-            if dev_id not in registered_ids:
+            if dev_id not in registered_variants and conn.device_id not in seen_active:
+                seen_active.add(conn.device_id)
                 result.append(conn.to_dict())
 
         # Attach active OTA job info if present
