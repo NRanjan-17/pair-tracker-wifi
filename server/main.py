@@ -863,8 +863,21 @@ async def device_stream_endpoint(
     role = dev["role"] if dev else "unassigned"
     if dev and dev.get("token") and bearer_token:
         if dev["token"] != bearer_token:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
-            return
+            # Check if this token was issued to this same physical MAC (e.g. re-provisioned via Web Serial)
+            token_dev = db.get_device_by_token(bearer_token)
+            clean_req = device_id.replace(":", "").replace("-", "").upper()
+            if token_dev and token_dev["device_id"].replace(":", "").replace("-", "").upper() == clean_req:
+                db.register_device(
+                    device_id=device_id,
+                    role=token_dev.get("role", dev["role"]),
+                    token=bearer_token,
+                    hw=token_dev.get("hw", dev.get("hw", "esp12e")),
+                )
+                dev = db.get_device(device_id)
+                role = dev["role"] if dev else "unassigned"
+            if dev and dev.get("token") and dev["token"] != bearer_token:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
+                return
 
     conn = await tracker_manager.connect_tracker(
         device_id=device_id,

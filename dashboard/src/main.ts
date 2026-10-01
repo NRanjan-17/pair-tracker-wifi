@@ -16,6 +16,46 @@ class DashboardApp {
   private devices: Map<string, DeviceState> = new Map(); // device_id -> DeviceState
   private roleToDevice: Map<string, DeviceState> = new Map(); // role -> DeviceState
   private activeSession: SessionInfo | null = null;
+  private activeRoleFilter: 'all' | 'arms' | 'legs' | 'online' = 'all';
+
+  public static readonly ALL_BODY_ROLES: string[] = [
+    'chest',
+    'left_shoulder',
+    'left_upper_arm',
+    'left_forearm',
+    'left_hand',
+    'right_shoulder',
+    'right_upper_arm',
+    'right_forearm',
+    'right_hand',
+    'left_thigh',
+    'left_shin',
+    'left_foot',
+    'right_thigh',
+    'right_shin',
+    'right_foot',
+  ];
+
+  public static readonly UPPER_BODY_ROLES: string[] = [
+    'chest',
+    'left_shoulder',
+    'left_upper_arm',
+    'left_forearm',
+    'left_hand',
+    'right_shoulder',
+    'right_upper_arm',
+    'right_forearm',
+    'right_hand',
+  ];
+
+  public static readonly LOWER_BODY_ROLES: string[] = [
+    'left_thigh',
+    'left_shin',
+    'left_foot',
+    'right_thigh',
+    'right_shin',
+    'right_foot',
+  ];
 
   // OTA firmware management
   public latestFirmware: FirmwareManifest | null = null;
@@ -235,6 +275,19 @@ class DashboardApp {
         if (perspBtn) perspBtn.classList.add('active');
       });
     }
+
+    // Role category filter buttons (All / Arms / Legs / Online)
+    const roleFilterButtons = document.querySelectorAll('.btn-role-filter');
+    roleFilterButtons.forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const target = e.currentTarget as HTMLButtonElement;
+        const filter = (target.dataset.roleFilter || 'all') as 'all' | 'arms' | 'legs' | 'online';
+        this.activeRoleFilter = filter;
+        roleFilterButtons.forEach((b) => b.classList.remove('active'));
+        target.classList.add('active');
+        this.renderCards();
+      });
+    });
   }
 
   public calibratePose() {
@@ -415,14 +468,53 @@ class DashboardApp {
     container.innerHTML = '';
 
     let onlineRequiredCount = 0;
-
     for (const role of this.requiredRoles) {
       const dev = this.roleToDevice.get(role);
+      if (dev && dev.online) onlineRequiredCount++;
+    }
+
+    let rolesToDisplay: string[] = [];
+    if (this.activeRoleFilter === 'arms') {
+      rolesToDisplay = [...DashboardApp.UPPER_BODY_ROLES];
+    } else if (this.activeRoleFilter === 'legs') {
+      rolesToDisplay = [...DashboardApp.LOWER_BODY_ROLES];
+    } else {
+      // 'all' or 'online'
+      rolesToDisplay = [...DashboardApp.ALL_BODY_ROLES];
+      for (const r of this.roleToDevice.keys()) {
+        if (r && r !== 'unassigned' && !rolesToDisplay.includes(r)) {
+          rolesToDisplay.push(r);
+        }
+      }
+    }
+
+    if (this.activeRoleFilter === 'online') {
+      rolesToDisplay = rolesToDisplay.filter((role) => {
+        const d = this.roleToDevice.get(role);
+        return d && d.online;
+      });
+    }
+
+    if (rolesToDisplay.length === 0) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.style.gridColumn = '1 / -1';
+      emptyDiv.style.padding = '36px 16px';
+      emptyDiv.style.textAlign = 'center';
+      emptyDiv.style.color = 'var(--text-tertiary)';
+      emptyDiv.style.fontSize = '0.85rem';
+      emptyDiv.innerText = this.activeRoleFilter === 'online'
+        ? 'No trackers are currently online.'
+        : 'No roles found for current filter.';
+      container.appendChild(emptyDiv);
+    }
+
+    for (const role of rolesToDisplay) {
+      const dev = this.roleToDevice.get(role);
       const isOnline = dev && dev.online;
-      if (isOnline) onlineRequiredCount++;
+      const isCore = this.requiredRoles.includes(role);
 
       const card = document.createElement('div');
-      // If role is missing/offline, mark with RED class 'missing'
+      // If role is missing/offline, mark with class 'missing'
       card.className = `card-role ${isOnline ? 'online' : 'missing'}`;
 
       const displayName = role.replace(/_/g, ' ');
@@ -447,13 +539,17 @@ class DashboardApp {
         ? `<span class="role-tag-badge hw-badge" style="background: rgba(56, 189, 248, 0.12); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.25);">${hwName}</span>`
         : '';
 
+      const roleCategoryBadge = isCore
+        ? `<span class="role-tag-badge" style="background: rgba(59, 130, 246, 0.12); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.25);">CORE</span>`
+        : `<span class="role-tag-badge" style="background: rgba(168, 85, 247, 0.12); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.25);">UPPER BODY</span>`;
+
       const statusText = isOnline ? 'ONLINE' : 'STANDBY';
 
       card.innerHTML = `
         <div class="card-top">
           <div class="role-title">
             <span>${displayName}</span>
-            <span class="role-tag-badge">${role}</span>
+            ${roleCategoryBadge}
             ${hwBadgeHtml}
           </div>
           <span class="status-indicator ${statusClass}">${statusText}</span>
@@ -507,7 +603,7 @@ class DashboardApp {
                       : `<button class="btn ${isOutdated ? 'btn-primary' : 'btn-secondary'} btn-sm" ${isBatteryLow ? 'disabled title="Battery < 30%"' : ''} onclick="window.dashboardApp.triggerOTA('${dev.device_id}')">Update</button>`
                   }
                 </div>`
-              : `<span style="color: var(--text-tertiary); font-size: 0.7rem; font-weight: 500;">Required for recording</span>`
+              : `<span style="color: var(--text-tertiary); font-size: 0.7rem; font-weight: 500;">${isCore ? 'Required for recording' : 'Upper body / Arm role'}</span>`
           }
         </div>
       `;
@@ -523,7 +619,7 @@ class DashboardApp {
     if (extraContainer) {
       extraContainer.innerHTML = '';
       const unassignedDevices = Array.from(this.devices.values()).filter(
-        (d) => d.online && (!d.role || d.role === 'unassigned' || !this.requiredRoles.includes(d.role))
+        (d) => d.online && (!d.role || d.role === 'unassigned')
       );
 
       if (unassignedBadge) {
@@ -582,7 +678,7 @@ class DashboardApp {
               <label for="assignRoleSelect-${dev.device_id}">Assign Body Role:</label>
               <select id="assignRoleSelect-${dev.device_id}" class="form-select">
                 <option value="">-- Choose Role --</option>
-                ${this.requiredRoles.map((r) => `<option value="${r}">${r.replace(/_/g, ' ').toUpperCase()}</option>`).join('')}
+                ${DashboardApp.ALL_BODY_ROLES.map((r) => `<option value="${r}">${r.replace(/_/g, ' ').toUpperCase()}${this.requiredRoles.includes(r) ? ' (CORE REQUIRED)' : ''}</option>`).join('')}
               </select>
               <button class="btn btn-primary btn-sm" onclick="window.dashboardApp.assignRole('${dev.device_id}')">Assign</button>
             </div>
@@ -605,13 +701,15 @@ class DashboardApp {
 
     // Update Summary Badge
     const summaryBadge = document.getElementById('roleSummary')!;
-    summaryBadge.innerText = `${onlineRequiredCount} / ${this.requiredRoles.length} Online`;
-    if (onlineRequiredCount === this.requiredRoles.length) {
-      summaryBadge.style.color = 'var(--success)';
-      summaryBadge.style.borderColor = 'var(--success)';
-    } else {
-      summaryBadge.style.color = 'var(--danger)';
-      summaryBadge.style.borderColor = 'var(--danger)';
+    if (summaryBadge) {
+      summaryBadge.innerText = `${onlineRequiredCount} / ${this.requiredRoles.length} Core Online`;
+      if (onlineRequiredCount === this.requiredRoles.length) {
+        summaryBadge.style.color = 'var(--success)';
+        summaryBadge.style.borderColor = 'var(--success)';
+      } else {
+        summaryBadge.style.color = 'var(--danger)';
+        summaryBadge.style.borderColor = 'var(--danger)';
+      }
     }
 
     // Telemetry bar active trackers (count all online devices)
@@ -1270,7 +1368,7 @@ class DashboardApp {
 
     if (overlay) overlay.style.display = 'none';
     if (headerTitle) headerTitle.innerText = '3D Biomechanical Avatar';
-    if (headerSub) headerSub.innerText = 'Live Quaternion Forward Kinematics (Three.js)';
+    if (headerSub) headerSub.innerText = 'Live Quaternion Forward Kinematics';
 
     const valActive = document.getElementById('valActiveTrackers');
     if (valActive) valActive.innerText = `${this.roleToDevice.size}`;
@@ -1528,7 +1626,7 @@ class DashboardApp {
       document.getElementById('valAvgLoss')!.innerText = avgLoss;
 
       // Update timestamps on cards
-      this.requiredRoles.forEach((role) => {
+      DashboardApp.ALL_BODY_ROLES.forEach((role) => {
         const dev = this.roleToDevice.get(role);
         const seenEl = document.getElementById(`seen-${role}`);
         if (seenEl && dev && dev.online) {

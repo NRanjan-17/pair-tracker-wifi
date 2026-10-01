@@ -62,6 +62,14 @@ class Database:
             conn.commit()
 
     # Device Operations
+    @staticmethod
+    def _normalize_mac(device_id: str) -> Optional[tuple]:
+        clean = device_id.replace(":", "").replace("-", "").upper()
+        if len(clean) == 12 and all(c in "0123456789ABCDEF" for c in clean):
+            colon_mac = ":".join(clean[i:i+2] for i in range(0, 12, 2))
+            return clean, colon_mac
+        return None
+
     def register_device(
         self,
         device_id: str,
@@ -73,8 +81,14 @@ class Database:
         free_heap: int = 0,
     ) -> Dict[str, Any]:
         now = int(time.time() * 1000)
+        mac_pair = self._normalize_mac(device_id)
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            if mac_pair:
+                clean, colon_mac = mac_pair
+                alt = colon_mac if device_id == clean else clean
+                cursor.execute("DELETE FROM devices WHERE device_id = ?", (alt,))
+
             cursor.execute("""
             INSERT INTO devices (device_id, role, token, notes, created_at, last_seen, hw, flash_size, free_heap)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -128,6 +142,13 @@ class Database:
             row = cursor.fetchone()
             if row:
                 return dict(row)
+            mac_pair = self._normalize_mac(device_id)
+            if mac_pair:
+                clean, colon_mac = mac_pair
+                cursor.execute("SELECT * FROM devices WHERE device_id = ? OR device_id = ?", (clean, colon_mac))
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
             return None
 
     def get_device_by_token(self, token: str) -> Optional[Dict[str, Any]]:

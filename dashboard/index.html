@@ -88,17 +88,26 @@
           <!-- Tab View 1: Live Trackers -->
           <div id="viewTrackers" class="tab-content active">
             <div class="panel-header">
-              <h2>Required Body Roles</h2>
+              <h2>Mocap Tracker Roles</h2>
               <div class="panel-header-actions">
                 <span id="latestFwBadge" class="badge badge-secondary" title="Latest released firmware version">v1.0.0</span>
                 <button id="btnUpdateAll" class="btn btn-sm btn-ghost" title="Sequentially update all outdated online trackers over WiFi">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
                   Update Outdated
                 </button>
-                <div id="roleSummary" class="roles-summary-badge">0 / 0 Online</div>
+                <div id="roleSummary" class="roles-summary-badge">0 / 7 Core Online</div>
               </div>
             </div>
-            <p class="panel-desc">All primary tracker roles must be online to initiate a motion recording session.</p>
+            <p class="panel-desc">Full-body and arm tracking modules. Core roles are required to initiate session recording.</p>
+
+            <!-- Role Category Filter Strip -->
+            <div class="role-filter-strip">
+              <button class="btn-role-filter active" data-role-filter="all">All Roles (15)</button>
+              <button class="btn-role-filter" data-role-filter="arms">Arms &amp; Upper Body (9)</button>
+              <button class="btn-role-filter" data-role-filter="legs">Legs &amp; Lower Body (6)</button>
+              <button class="btn-role-filter" data-role-filter="online">Online Only</button>
+            </div>
+
             <div id="requiredRolesContainer" class="cards-grid">
               <!-- Dynamically populated -->
             </div>
@@ -280,7 +289,7 @@
           <div class="viewport-header">
             <div class="viewport-title">
               <h2 id="viewportHeaderTitle">Studio Viewport</h2>
-              <span id="viewportHeaderSub" class="subtle">Three.js Quaternion FK Rig &bull; 60 FPS Target</span>
+              <span id="viewportHeaderSub" class="subtle">Live Quaternion Forward Kinematics &bull; 60 FPS Target</span>
             </div>
             <div class="viewport-controls">
               <!-- Camera view angle presets -->

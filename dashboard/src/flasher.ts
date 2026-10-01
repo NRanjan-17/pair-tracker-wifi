@@ -140,7 +140,8 @@ export class TrackerFlasher {
       // Read MAC address
       let mac = '';
       try {
-        mac = (await esploader.chip.readMac(esploader)).toUpperCase();
+        const rawMac = await esploader.chip.readMac(esploader);
+        mac = rawMac.replace(/[:-]/g, '').toUpperCase();
       } catch (e: any) {
         this.callbacks.onLog(`Warning: Could not read MAC from chip eFuse: ${e.message}\n`);
         mac = 'ESP_' + Math.random().toString(16).substring(2, 8).toUpperCase();

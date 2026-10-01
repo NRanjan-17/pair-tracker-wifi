@@ -31,8 +31,8 @@ export class ThreeVisualizer {
   constructor(container: HTMLElement) {
     this.container = container;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x090d16);
-    this.scene.fog = new THREE.FogExp2(0x090d16, 0.042);
+    this.scene.background = new THREE.Color(0x0a0f1d);
+    this.scene.fog = new THREE.FogExp2(0x0a0f1d, 0.015);
 
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
@@ -46,7 +46,7 @@ export class ThreeVisualizer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.18;
     container.appendChild(this.renderer.domElement);
 
     this.setupLighting();
@@ -63,11 +63,11 @@ export class ThreeVisualizer {
 
   private setupLighting() {
     // 1. Soft balanced ambient fill
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
     this.scene.add(ambientLight);
 
     // 2. High-precision studio Key Light (Crisp white with soft shadow drop)
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.45);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
     keyLight.position.set(4, 9, 6);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.width = 2048;
@@ -82,19 +82,19 @@ export class ThreeVisualizer {
     this.scene.add(keyLight);
 
     // 3. Cool Studio Fill Light (from left to reveal chassis depth)
-    const fillLight = new THREE.DirectionalLight(0xcfd8dc, 0.65);
+    const fillLight = new THREE.DirectionalLight(0xbae6fd, 0.95);
     fillLight.position.set(-5, 4, 3);
     this.scene.add(fillLight);
 
     // 4. Subtle Studio Rim / Contour Backlight (Highlights metallic bevels)
-    const rimLight = new THREE.DirectionalLight(0xe2e8f0, 0.85);
+    const rimLight = new THREE.DirectionalLight(0xffffff, 1.25);
     rimLight.position.set(0, 5, -6);
     this.scene.add(rimLight);
   }
 
   private setupEnvironment() {
-    // 1. Precision Mocap Studio Grid Floor
-    const grid = new THREE.GridHelper(12, 24, 0x334155, 0x182030);
+    // 1. Precision Mocap Studio Grid Floor (Cyan center axes, dark slate sub-divisions)
+    const grid = new THREE.GridHelper(14, 28, 0x38bdf8, 0x1e293b);
     grid.position.y = 0;
     this.scene.add(grid);
 

@@ -58,63 +58,69 @@ export class AvatarRig {
     this.rootGroup.name = 'avatar_root';
     this.scene.add(this.rootGroup);
 
-    // 1. Titanium / Carbon chassis (Professional studio mocap aesthetic)
+    // 1. Vibrant Studio Titanium Chassis for Live Streaming / Online Limbs
     this.onlineChassisMaterial = new THREE.MeshStandardMaterial({
-      color: 0x1e2838,
-      metalness: 0.62,
-      roughness: 0.32,
+      color: 0x38bdf8,
+      metalness: 0.35,
+      roughness: 0.25,
+      emissive: 0x0284c7,
+      emissiveIntensity: 0.15,
     });
 
-    // 2. Machined Aluminum Joint Gimbals
+    // 2. Machined Anodized Joint Gimbal Collars
     this.jointPivotMaterial = new THREE.MeshStandardMaterial({
-      color: 0x475569,
-      metalness: 0.85,
-      roughness: 0.18,
+      color: 0x0284c7,
+      metalness: 0.8,
+      roughness: 0.2,
+      emissive: 0x0369a1,
+      emissiveIntensity: 0.12,
     });
 
     // 3. Eidon IMU Tracker Puck Enclosure (Dark matte composite)
     this.trackerPuckMaterial = new THREE.MeshStandardMaterial({
-      color: 0x0f172a,
-      metalness: 0.45,
+      color: 0x1e293b,
+      metalness: 0.55,
       roughness: 0.35,
     });
 
-    // 4. Active Sensor LED Glow Ring (Electric Cyan)
+    // 4. Active Sensor LED Glow Ring (Electric Cyan Neon)
     this.activeSensorLedMaterial = new THREE.MeshStandardMaterial({
-      color: 0x38bdf8,
+      color: 0x00e5ff,
       emissive: 0x00e5ff,
-      emissiveIntensity: 0.85,
-      metalness: 0.2,
-      roughness: 0.2,
+      emissiveIntensity: 1.5,
+      metalness: 0.1,
+      roughness: 0.1,
     });
 
-    // 5. Inactive / Standby Sensor LED Ring (Dark Slate)
+    // 5. Inactive / Standby Sensor LED Ring (Clean Amber/Slate Standby Indicator)
     this.inactiveSensorLedMaterial = new THREE.MeshStandardMaterial({
-      color: 0x263345,
-      emissive: 0x000000,
-      emissiveIntensity: 0,
-      roughness: 0.8,
+      color: 0x64748b,
+      emissive: 0x334155,
+      emissiveIntensity: 0.25,
+      roughness: 0.5,
     });
 
-    // 6. Phantom Translucent Chassis for Unbound / Offline Limbs
+    // 6. High-Contrast Studio Titanium Chassis for Standby / Default / Offline Limbs
+    // (Crisp, fully opaque, beautifully illuminated silver-slate mannequin!)
     this.offlineChassisMaterial = new THREE.MeshStandardMaterial({
-      color: 0x151c28,
-      metalness: 0.2,
-      roughness: 0.85,
-      transparent: true,
-      opacity: 0.36,
+      color: 0x94a3b8,
+      metalness: 0.45,
+      roughness: 0.35,
+      transparent: false,
     });
 
-    // 7. Dark Mirror-Finish Helmet Visor
+    // 7. Glowing Studio Visor Band (Vibrant cyan so head facing is clear)
     this.visorMaterial = new THREE.MeshStandardMaterial({
-      color: 0x030712,
-      metalness: 0.95,
-      roughness: 0.05,
+      color: 0x00e5ff,
+      emissive: 0x00e5ff,
+      emissiveIntensity: 0.95,
+      metalness: 0.2,
+      roughness: 0.1,
     });
 
     // 8. Minimalist Accent Line
     this.accentLineMaterial = new THREE.MeshBasicMaterial({
-      color: 0x38bdf8,
+      color: 0x00e5ff,
     });
 
     this.buildSkeleton();
@@ -153,75 +159,69 @@ export class AvatarRig {
     const meshes: THREE.Mesh[] = [];
 
     // A. Precision Joint Pivot (Spherical Gimbal + Outer Bearing Collar)
-    const jointRadius = bone.radius * 1.15;
-    const jointGeo = new THREE.SphereGeometry(jointRadius, 20, 20);
-    const jointMesh = new THREE.Mesh(jointGeo, this.jointPivotMaterial);
-    jointMesh.castShadow = true;
-    group.add(jointMesh);
-    meshes.push(jointMesh);
+    if (bone.name !== 'chest') {
+      const jointRadius = bone.radius * 1.1;
+      const jointGeo = new THREE.SphereGeometry(jointRadius, 18, 18);
+      const jointMesh = new THREE.Mesh(jointGeo, this.jointPivotMaterial);
+      jointMesh.castShadow = true;
+      group.add(jointMesh);
+      meshes.push(jointMesh);
 
-    // Subtle aluminum bearing ring around the joint pivot
-    const collarGeo = new THREE.CylinderGeometry(jointRadius * 1.12, jointRadius * 1.12, jointRadius * 0.45, 18);
-    const collarMesh = new THREE.Mesh(collarGeo, this.jointPivotMaterial);
-    group.add(collarMesh);
-    meshes.push(collarMesh);
+      // Subtle aluminum bearing ring around the joint pivot
+      const collarGeo = new THREE.CylinderGeometry(jointRadius * 1.08, jointRadius * 1.08, jointRadius * 0.35, 16);
+      const collarMesh = new THREE.Mesh(collarGeo, this.jointPivotMaterial);
+      group.add(collarMesh);
+      meshes.push(collarMesh);
+    }
 
     // B. Anatomical & High-Precision Limb Geometry
     if (bone.name === 'chest') {
-      // 1. Upper Torso / Pectoral Armor
-      const upperTorsoGeo = new THREE.CylinderGeometry(0.14, 0.12, bone.length * 0.65, 8);
-      const upperTorso = new THREE.Mesh(upperTorsoGeo, this.onlineChassisMaterial);
-      upperTorso.position.set(0, -bone.length * 0.28, 0);
-      upperTorso.rotation.y = Math.PI / 8;
+      // 1. Upper Torso / Pectoral Armor (Spans from Y = -0.14 up to shoulders at Y = +0.10)
+      const upperTorsoGeo = new THREE.CylinderGeometry(0.15, 0.12, 0.24, 8);
+      const upperTorso = new THREE.Mesh(upperTorsoGeo, this.offlineChassisMaterial);
+      upperTorso.position.set(0, -0.02, 0);
       upperTorso.scale.set(1.15, 1, 0.72);
       upperTorso.castShadow = true;
       group.add(upperTorso);
       meshes.push(upperTorso);
 
-      // 2. Segmented Lower Spine & Rib Cage
-      const spineGeo = new THREE.CylinderGeometry(0.10, 0.09, bone.length * 0.35, 8);
+      // 2. Segmented Lower Spine & Waist
+      const spineGeo = new THREE.CylinderGeometry(0.09, 0.08, 0.10, 8);
       const spineMesh = new THREE.Mesh(spineGeo, this.jointPivotMaterial);
-      spineMesh.position.set(0, -bone.length * 0.65, 0);
+      spineMesh.position.set(0, -0.17, 0);
       spineMesh.scale.set(1.05, 1, 0.7);
       spineMesh.castShadow = true;
       group.add(spineMesh);
       meshes.push(spineMesh);
 
-      // 3. Pelvis Saddle
-      const pelvisGeo = new THREE.CylinderGeometry(0.12, 0.10, 0.12, 8);
-      const pelvisMesh = new THREE.Mesh(pelvisGeo, this.onlineChassisMaterial);
-      pelvisMesh.position.set(0, -bone.length * 0.85, 0);
-      pelvisMesh.scale.set(1.1, 1, 0.75);
+      // 3. Pelvis Base (Sits right above hips)
+      const pelvisGeo = new THREE.CylinderGeometry(0.12, 0.09, 0.08, 8);
+      const pelvisMesh = new THREE.Mesh(pelvisGeo, this.offlineChassisMaterial);
+      pelvisMesh.position.set(0, -0.24, 0);
+      pelvisMesh.scale.set(1.15, 1, 0.75);
       group.add(pelvisMesh);
       meshes.push(pelvisMesh);
 
-      // 4. Clavicle / Collarbone Bridge
-      const collarBarGeo = new THREE.BoxGeometry(0.34, 0.035, 0.05);
-      const collarBar = new THREE.Mesh(collarBarGeo, this.jointPivotMaterial);
-      collarBar.position.set(0, 0.12, 0);
-      group.add(collarBar);
-      meshes.push(collarBar);
-
-      // 5. Sleek Neck Pillar
+      // 4. Sleek Neck Pillar
       const neckGeo = new THREE.CylinderGeometry(0.038, 0.045, 0.09, 16);
       const neckMesh = new THREE.Mesh(neckGeo, this.jointPivotMaterial);
-      neckMesh.position.set(0, 0.11, 0);
+      neckMesh.position.set(0, 0.13, 0);
       group.add(neckMesh);
       meshes.push(neckMesh);
 
-      // 6. Aerodynamic Studio Mocap Helmet (Replaces the toy sphere/box visor)
+      // 5. Aerodynamic Studio Mocap Helmet
       const headGroup = new THREE.Group();
       headGroup.position.set(0, 0.22, 0);
 
       // Helmet shell
       const helmetGeo = new THREE.CylinderGeometry(0.075, 0.062, 0.15, 10);
-      const helmetMesh = new THREE.Mesh(helmetGeo, this.onlineChassisMaterial);
+      const helmetMesh = new THREE.Mesh(helmetGeo, this.offlineChassisMaterial);
       helmetMesh.scale.set(0.9, 1, 1.15);
       helmetMesh.castShadow = true;
       headGroup.add(helmetMesh);
       meshes.push(helmetMesh);
 
-      // Dark mirror-finish recessed visor band
+      // Glowing recessed visor band
       const visorGeo = new THREE.CylinderGeometry(0.076, 0.064, 0.05, 10, 1, false, 0, Math.PI);
       const visorMesh = new THREE.Mesh(visorGeo, this.visorMaterial);
       visorMesh.position.set(0, 0.015, 0.005);
@@ -240,7 +240,7 @@ export class AvatarRig {
     } else if (bone.name.includes('hand')) {
       // Sleek Geometric Palm with minimalist finger profile
       const palmGeo = new THREE.BoxGeometry(0.055, bone.length * 0.7, 0.026);
-      const palmMesh = new THREE.Mesh(palmGeo, this.onlineChassisMaterial);
+      const palmMesh = new THREE.Mesh(palmGeo, this.offlineChassisMaterial);
       palmMesh.position.set(0, -bone.length * 0.45, 0);
       palmMesh.castShadow = true;
       group.add(palmMesh);
@@ -256,7 +256,7 @@ export class AvatarRig {
     } else if (bone.name.includes('foot')) {
       // Sleek athletic mocap sole
       const footGeo = new THREE.BoxGeometry(0.065, 0.042, bone.length);
-      const footMesh = new THREE.Mesh(footGeo, this.onlineChassisMaterial);
+      const footMesh = new THREE.Mesh(footGeo, this.offlineChassisMaterial);
       footMesh.position.set(0, -0.02, bone.length * 0.42);
       footMesh.castShadow = true;
       group.add(footMesh);
@@ -272,7 +272,7 @@ export class AvatarRig {
     } else {
       // Tapered Carbon-Fiber Cylindrical Limb Segment
       const cylGeo = new THREE.CylinderGeometry(bone.radius * 0.82, bone.radius * 1.05, bone.length, 16);
-      const cylMesh = new THREE.Mesh(cylGeo, this.onlineChassisMaterial);
+      const cylMesh = new THREE.Mesh(cylGeo, this.offlineChassisMaterial);
       cylMesh.castShadow = true;
 
       const dir = bone.direction;
@@ -294,43 +294,60 @@ export class AvatarRig {
 
     // C. Physical Eidon IMU Tracker Puck Module Mounted to Limb
     // Represents the actual physical hardware module and displays a glowing status ring!
-    const trackerGroup = new THREE.Group();
-    const puckRadius = 0.024;
-    const puckHeight = 0.012;
+    // Mount tracker pucks only to actual mocap tracker roles, aligned perfectly on front centerline
+    const TRACKED_ROLES = [
+      'chest',
+      'left_upper_arm',
+      'right_upper_arm',
+      'left_forearm',
+      'right_forearm',
+      'left_hand',
+      'right_hand',
+      'left_thigh',
+      'right_thigh',
+      'left_shin',
+      'right_shin',
+      'left_foot',
+      'right_foot',
+    ];
 
-    const puckGeo = new THREE.CylinderGeometry(puckRadius, puckRadius * 1.05, puckHeight, 16);
-    const puckMesh = new THREE.Mesh(puckGeo, this.trackerPuckMaterial);
-    puckMesh.rotation.x = Math.PI / 2;
-    trackerGroup.add(puckMesh);
+    if (TRACKED_ROLES.includes(bone.name)) {
+      const trackerGroup = new THREE.Group();
+      const puckRadius = 0.024;
+      const puckHeight = 0.012;
 
-    // Glowing LED status ring on top of the tracker module
-    const ledRingGeo = new THREE.TorusGeometry(puckRadius * 0.65, 0.0035, 8, 20);
-    const ledRingMesh = new THREE.Mesh(ledRingGeo, this.inactiveSensorLedMaterial);
-    ledRingMesh.position.set(0, 0, puckHeight * 0.55);
-    trackerGroup.add(ledRingMesh);
-    this.trackerLedMeshes.set(bone.name, ledRingMesh);
+      const puckGeo = new THREE.CylinderGeometry(puckRadius, puckRadius * 1.05, puckHeight, 16);
+      const puckMesh = new THREE.Mesh(puckGeo, this.trackerPuckMaterial);
+      puckMesh.rotation.x = Math.PI / 2;
+      trackerGroup.add(puckMesh);
 
-    // Position puck on the outer visible surface of each bone
-    if (bone.name === 'chest') {
-      trackerGroup.position.set(0, -bone.length * 0.28, 0.10);
-    } else if (bone.name.includes('thigh')) {
-      trackerGroup.position.set(bone.direction[0] !== 0 ? 0 : 0.048, -bone.length * 0.45, 0.045);
-    } else if (bone.name.includes('shin')) {
-      trackerGroup.position.set(0, -bone.length * 0.45, 0.045);
-    } else if (bone.name.includes('upper_arm')) {
-      trackerGroup.position.set(bone.name.includes('left') ? 0.048 : -0.048, -bone.length * 0.45, 0.01);
-    } else if (bone.name.includes('forearm')) {
-      trackerGroup.position.set(0, -bone.length * 0.45, 0.04);
-    } else if (bone.name.includes('hand')) {
-      trackerGroup.position.set(0, -bone.length * 0.42, 0.022);
-    } else if (bone.name.includes('foot')) {
-      trackerGroup.position.set(0, 0.02, bone.length * 0.45);
-      trackerGroup.rotation.x = -Math.PI / 2;
-    } else {
-      trackerGroup.position.set(0, 0, bone.radius * 1.1);
+      // Glowing LED status ring on top of the tracker module
+      const ledRingGeo = new THREE.TorusGeometry(puckRadius * 0.65, 0.0035, 8, 20);
+      const ledRingMesh = new THREE.Mesh(ledRingGeo, this.inactiveSensorLedMaterial);
+      ledRingMesh.position.set(0, 0, puckHeight * 0.55);
+      trackerGroup.add(ledRingMesh);
+      this.trackerLedMeshes.set(bone.name, ledRingMesh);
+
+      // Position puck on the front visible surface, perfectly centered (X = 0)
+      if (bone.name === 'chest') {
+        trackerGroup.position.set(0, 0.0, 0.10);
+      } else if (bone.name.includes('thigh')) {
+        trackerGroup.position.set(0, -bone.length * 0.45, 0.052);
+      } else if (bone.name.includes('shin')) {
+        trackerGroup.position.set(0, -bone.length * 0.45, 0.046);
+      } else if (bone.name.includes('upper_arm')) {
+        trackerGroup.position.set(0, -bone.length * 0.45, 0.044);
+      } else if (bone.name.includes('forearm')) {
+        trackerGroup.position.set(0, -bone.length * 0.45, 0.040);
+      } else if (bone.name.includes('hand')) {
+        trackerGroup.position.set(0, -bone.length * 0.42, 0.024);
+      } else if (bone.name.includes('foot')) {
+        trackerGroup.position.set(0, 0.024, bone.length * 0.45);
+        trackerGroup.rotation.x = -Math.PI / 2;
+      }
+
+      group.add(trackerGroup);
     }
-
-    group.add(trackerGroup);
 
     this.boneMeshes.set(bone.name, meshes);
   }
