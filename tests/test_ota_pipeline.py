@@ -62,9 +62,15 @@ def setup_firmware_release():
     }
     (rel_101 / "manifest.json").write_text(json.dumps(manifest_101, indent=2))
 
+    c6_101 = FIRMWARE_BIN_DIR / "esp32c6" / "1.0.1"
+    c6_101.mkdir(parents=True, exist_ok=True)
+    (c6_101 / "firmware.bin").write_bytes(bin_101_data)
+    (c6_101 / "manifest.json").write_text(json.dumps(manifest_101, indent=2))
+
     yield
 
     shutil.rmtree(rel_101, ignore_errors=True)
+    shutil.rmtree(c6_101, ignore_errors=True)
     if created_release_dir:
         shutil.rmtree(release_dir, ignore_errors=True)
 
