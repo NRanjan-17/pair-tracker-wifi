@@ -408,3 +408,41 @@ def test_device_role_update_endpoint():
     )
     assert res.status_code == 400
 
+
+def test_paired_devices_unpair_and_cleanup_endpoints():
+    admin_headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    dev1 = "TESTMACPAIRED1"
+    dev2 = "TESTMACPAIRED2"
+
+    # Register dev1 and dev2
+    client.post("/v1/devices/announce", json={"device_id": dev1, "role": "unassigned", "hw": "esp12e"})
+    client.post("/v1/devices/announce", json={"device_id": dev2, "role": "unassigned", "hw": "esp32c6"})
+
+    # Check /v1/devices/paired returns both
+    res = client.get("/v1/devices/paired", headers=admin_headers)
+    assert res.status_code == 200
+    paired_ids = [d["device_id"] for d in res.json()["devices"]]
+    assert dev1 in paired_ids
+    assert dev2 in paired_ids
+
+    # Unpair dev1
+    del_res = client.delete(f"/v1/devices/{dev1}", headers=admin_headers)
+    assert del_res.status_code == 200
+    assert del_res.json()["deleted"] is True
+
+    # Check dev1 is gone
+    res = client.get("/v1/devices/paired", headers=admin_headers)
+    paired_ids = [d["device_id"] for d in res.json()["devices"]]
+    assert dev1 not in paired_ids
+    assert dev2 in paired_ids
+
+    # Cleanup offline devices
+    cleanup_res = client.post("/v1/devices/cleanup", json={"mode": "offline"}, headers=admin_headers)
+    assert cleanup_res.status_code == 200
+    assert cleanup_res.json()["deleted_count"] >= 1
+
+    # Check dev2 is also gone (was offline)
+    res = client.get("/v1/devices/paired", headers=admin_headers)
+    paired_ids = [d["device_id"] for d in res.json()["devices"]]
+    assert dev2 not in paired_ids
+

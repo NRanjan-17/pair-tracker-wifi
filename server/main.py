@@ -632,6 +632,31 @@ async def send_device_command(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not connected")
     return {"status": "command_sent", "command": cmd}
 
+@app.get("/v1/devices/paired")
+async def get_paired_devices(_admin: bool = Depends(verify_admin_token)):
+    devices = tracker_manager.get_device_summary()
+    return {"status": "ok", "devices": devices}
+
+@app.delete("/v1/devices/{device_id}")
+async def unpair_device_endpoint(
+    device_id: str,
+    _admin: bool = Depends(verify_admin_token),
+):
+    deleted = await tracker_manager.unpair_device(device_id)
+    return {"status": "device_unpaired", "device_id": device_id, "deleted": deleted}
+
+class DeviceCleanupRequest(BaseModel):
+    mode: str = "offline"  # "offline" or "all"
+
+@app.post("/v1/devices/cleanup")
+async def cleanup_devices_endpoint(
+    payload: Optional[DeviceCleanupRequest] = None,
+    _admin: bool = Depends(verify_admin_token),
+):
+    mode = payload.mode if payload else "offline"
+    deleted_count = await tracker_manager.cleanup_stale_devices(mode=mode)
+    return {"status": "cleaned", "deleted_count": deleted_count, "mode": mode}
+
 # Sessions Endpoints
 @app.post("/v1/sessions", status_code=status.HTTP_201_CREATED)
 async def start_session(

@@ -176,6 +176,40 @@ class Database:
             cursor.execute("UPDATE devices SET last_seen = ? WHERE device_id = ?", (timestamp_ms, device_id))
             conn.commit()
 
+    def delete_device(self, device_id: str) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            mac_pair = self._normalize_mac(device_id)
+            if mac_pair:
+                clean, colon_mac = mac_pair
+                cursor.execute("DELETE FROM devices WHERE device_id = ? OR device_id = ?", (clean, colon_mac))
+            else:
+                cursor.execute("DELETE FROM devices WHERE device_id = ?", (device_id,))
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            return deleted
+
+    def cleanup_offline_devices(self, keep_device_ids: List[str]) -> int:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if not keep_device_ids:
+                cursor.execute("DELETE FROM devices")
+                deleted = cursor.rowcount
+            else:
+                all_keep = set()
+                for did in keep_device_ids:
+                    all_keep.add(did)
+                    mac_pair = self._normalize_mac(did)
+                    if mac_pair:
+                        all_keep.add(mac_pair[0])
+                        all_keep.add(mac_pair[1])
+
+                placeholders = ",".join("?" for _ in all_keep)
+                cursor.execute(f"DELETE FROM devices WHERE device_id NOT IN ({placeholders})", list(all_keep))
+                deleted = cursor.rowcount
+            conn.commit()
+            return deleted
+
     # Session Operations
     def create_session(
         self,

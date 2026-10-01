@@ -76,6 +76,9 @@ class DashboardApp {
   private sessionsList: any[] = [];
   private exportSessionId: string | null = null;
 
+  // Paired devices cache
+  private pairedDevicesList: any[] = [];
+
   // Live Logging & Console
   private logEntries: Array<{ time: string; badge: string; category: string; message: string }> = [];
   private activeLogFilter: string = 'all';
@@ -91,6 +94,7 @@ class DashboardApp {
     this.startPeriodicUpdates();
     this.fetchSessions();
     this.fetchLatestFirmware();
+    this.fetchPairedDevices();
   }
 
   private initVisualizer() {
@@ -288,6 +292,29 @@ class DashboardApp {
         this.renderCards();
       });
     });
+
+    // Paired Devices modal listeners
+    const btnManageDevices = document.getElementById('btnManageDevices');
+    const btnClosePaired = document.getElementById('btnClosePairedDevicesModal');
+    const btnClosePairedFooter = document.getElementById('btnClosePairedDevicesModalFooter');
+    const btnRefreshPaired = document.getElementById('btnRefreshPairedDevices');
+    const btnCleanOffline = document.getElementById('btnCleanOfflineDevices');
+
+    if (btnManageDevices) {
+      btnManageDevices.addEventListener('click', () => this.openPairedDevicesModal());
+    }
+    if (btnClosePaired) {
+      btnClosePaired.addEventListener('click', () => this.closePairedDevicesModal());
+    }
+    if (btnClosePairedFooter) {
+      btnClosePairedFooter.addEventListener('click', () => this.closePairedDevicesModal());
+    }
+    if (btnRefreshPaired) {
+      btnRefreshPaired.addEventListener('click', () => this.fetchPairedDevices());
+    }
+    if (btnCleanOffline) {
+      btnCleanOffline.addEventListener('click', () => this.cleanupOfflineDevices());
+    }
   }
 
   public calibratePose() {
@@ -371,6 +398,8 @@ class DashboardApp {
         this.activeSession = init.active_session;
         this.updateSessionUI();
         this.renderCards();
+        this.updatePairedDevicesBadge();
+        this.fetchPairedDevices();
         this.addLog('sys', `Server init: ${init.devices?.length || 0} registered devices, ${init.required_roles?.length || 0} required roles`, 'INIT');
         break;
       }
@@ -396,6 +425,10 @@ class DashboardApp {
         }
         this.renderCards();
         this.updateRecordingLossBanner();
+        this.updatePairedDevicesBadge();
+        if (this.isPairedDevicesModalOpen()) {
+          this.fetchPairedDevices();
+        }
         break;
       }
 
@@ -405,11 +438,41 @@ class DashboardApp {
           const hw = (dev.hw || 'esp12e').toUpperCase();
           this.addLog('announce', `Tracker connected: ${dev.device_id} (${hw}) role='${dev.role}' heap=${dev.free_heap || 0}B`, 'CONNECT');
         }
+        this.updatePairedDevicesBadge();
+        if (this.isPairedDevicesModalOpen()) {
+          this.fetchPairedDevices();
+        }
         break;
       }
 
       case 'device_disconnected': {
         this.addLog('warn', `Tracker disconnected: ${msg.device_id} role='${msg.role}'`, 'DISCONNECT');
+        this.updatePairedDevicesBadge();
+        if (this.isPairedDevicesModalOpen()) {
+          this.fetchPairedDevices();
+        }
+        break;
+      }
+
+      case 'device_deleted': {
+        const devId = msg.device_id;
+        this.devices.delete(devId);
+        this.roleToDevice.forEach((dev, role) => {
+          if (dev.device_id === devId) {
+            this.roleToDevice.delete(role);
+          }
+        });
+        this.pairedDevicesList = this.pairedDevicesList.filter((d) => d.device_id !== devId);
+        this.renderCards();
+        this.renderPairedDevicesList();
+        this.updatePairedDevicesBadge();
+        this.addLog('warn', `Tracker un-paired & removed: ${devId}`, 'UNPAIR');
+        break;
+      }
+
+      case 'devices_cleaned': {
+        this.fetchPairedDevices();
+        this.addLog('warn', `Cleaned up ${msg.deleted_count} stale/offline devices from registry`, 'CLEANUP');
         break;
       }
 
@@ -1190,6 +1253,168 @@ class DashboardApp {
     });
 
     lossEl.innerText = parts.length > 0 ? `Per-device loss: ${parts.join(' | ')}` : 'Per-device loss: waiting for stream...';
+  }
+
+  public openPairedDevicesModal() {
+    const modal = document.getElementById('pairedDevicesModal');
+    if (modal) modal.style.display = 'flex';
+    this.fetchPairedDevices();
+  }
+
+  public closePairedDevicesModal() {
+    const modal = document.getElementById('pairedDevicesModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  public isPairedDevicesModalOpen(): boolean {
+    const modal = document.getElementById('pairedDevicesModal');
+    return modal ? modal.style.display === 'flex' : false;
+  }
+
+  public async fetchPairedDevices() {
+    try {
+      const res = await fetch('/v1/devices/paired', {
+        headers: {
+          Authorization: `Bearer ${ADMIN_TOKEN}`,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.pairedDevicesList = data.devices || [];
+      } else {
+        const fallbackRes = await fetch('/v1/devices');
+        if (fallbackRes.ok) {
+          this.pairedDevicesList = await fallbackRes.json();
+        }
+      }
+      this.updatePairedDevicesBadge();
+      this.renderPairedDevicesList();
+    } catch (err) {
+      console.warn('Failed to fetch paired devices:', err);
+    }
+  }
+
+  public updatePairedDevicesBadge() {
+    const badge = document.getElementById('pairedDevicesCount');
+    if (badge) {
+      const count = this.pairedDevicesList.length || this.devices.size;
+      badge.innerText = `${count}`;
+    }
+  }
+
+  private renderPairedDevicesList() {
+    const tbody = document.getElementById('pairedDevicesTableBody');
+    const summaryText = document.getElementById('pairedSummaryText');
+    if (!tbody) return;
+
+    const total = this.pairedDevicesList.length;
+    const onlineCount = this.pairedDevicesList.filter((d) => d.online).length;
+    const offlineCount = total - onlineCount;
+
+    if (summaryText) {
+      summaryText.innerText = `${total} registered tracker${total === 1 ? '' : 's'} (${onlineCount} online, ${offlineCount} offline)`;
+    }
+
+    if (total === 0) {
+      tbody.innerHTML = `
+        <tr class="paired-empty-row">
+          <td colspan="7">No registered trackers in database. Connect or flash a device to begin.</td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = '';
+    for (const dev of this.pairedDevicesList) {
+      const tr = document.createElement('tr');
+      const isOnline = Boolean(dev.online);
+      const hwUpper = (dev.hw || 'esp12e').toUpperCase();
+      const chipClass = (dev.hw === 'esp12e' || dev.hw === 'esp8266') ? 'chip-badge-esp12e' : 'chip-badge-esp32c6';
+      const lastSeen = dev.last_seen_ms
+        ? this.formatTimeAgo(dev.last_seen_ms)
+        : (dev.last_seen ? this.formatTimeAgo(dev.last_seen) : 'Never');
+      const fwStr = dev.firmware_version && dev.firmware_version !== 'unknown'
+        ? `v${this.escapeHtml(dev.firmware_version)}`
+        : '—';
+      const roleStr = dev.role ? dev.role.replace(/_/g, ' ') : 'unassigned';
+
+      tr.innerHTML = `
+        <td><strong style="font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--accent);">${this.escapeHtml(dev.device_id)}</strong></td>
+        <td><span class="badge badge-secondary" style="font-size: 0.7rem; font-weight: 500;">${this.escapeHtml(roleStr)}</span></td>
+        <td><span class="${chipClass}">${this.escapeHtml(hwUpper)}</span></td>
+        <td><span class="badge ${isOnline ? 'badge-connected' : 'badge-disconnected'}">${isOnline ? 'Online' : 'Offline'}</span></td>
+        <td style="color: var(--text-tertiary); font-size: 0.72rem;">${this.escapeHtml(lastSeen)}</td>
+        <td style="color: var(--text-secondary); font-size: 0.72rem;">${fwStr}</td>
+        <td style="text-align: right;">
+          <button class="btn-icon-danger" title="Unpair and delete tracker ${this.escapeHtml(dev.device_id)}" onclick="window.dashboardApp.unpairDevice('${this.escapeHtml(dev.device_id)}')">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Unpair
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  public async unpairDevice(deviceId: string) {
+    if (!confirm(`Are you sure you want to unpair and remove tracker ${deviceId}?\nThis will disconnect it and remove its token and role registration.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/v1/devices/${encodeURIComponent(deviceId)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${ADMIN_TOKEN}`,
+        },
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(`Failed to unpair device: ${data.detail || res.statusText}`);
+        return;
+      }
+
+      this.addLog('warn', `Successfully unpaired device ${deviceId}`, 'UNPAIR');
+      await this.fetchPairedDevices();
+    } catch (err: any) {
+      alert(`Error unpairing device: ${err.message}`);
+    }
+  }
+
+  public async cleanupOfflineDevices() {
+    const offlineCount = this.pairedDevicesList.filter((d) => !d.online).length;
+    if (offlineCount === 0) {
+      alert('All registered trackers are currently online. No offline trackers to clean up.');
+      return;
+    }
+
+    if (!confirm(`Remove ${offlineCount} offline/stale tracker(s) from the registry database?\nOnline trackers will not be affected.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/v1/devices/cleanup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${ADMIN_TOKEN}`,
+        },
+        body: JSON.stringify({ mode: 'offline' }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(`Failed to clean up devices: ${data.detail || res.statusText}`);
+        return;
+      }
+
+      const data = await res.json();
+      this.addLog('warn', `Cleaned up ${data.deleted_count} offline tracker(s)`, 'CLEANUP');
+      await this.fetchPairedDevices();
+    } catch (err: any) {
+      alert(`Error cleaning up devices: ${err.message}`);
+    }
   }
 
   public async fetchSessions() {

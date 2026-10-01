@@ -318,6 +318,65 @@ class TrackerManager:
                 "uptime_s": None,
             })
 
+    async def unpair_device(self, device_id: str) -> bool:
+        # 1. Close connection if online
+        if device_id in self.active_connections:
+            conn = self.active_connections[device_id]
+            try:
+                await conn.ws.close(code=1000, reason="Device unpaired by administrator")
+            except Exception:
+                pass
+            await self.disconnect_tracker(device_id)
+
+        # 2. Clear cached telemetry
+        self.cached_announced_telemetry.pop(device_id, None)
+        mac_pair = db._normalize_mac(device_id)
+        if mac_pair:
+            self.cached_announced_telemetry.pop(mac_pair[0], None)
+            self.cached_announced_telemetry.pop(mac_pair[1], None)
+
+        # 3. Delete from DB
+        deleted = db.delete_device(device_id)
+
+        # 4. Broadcast deletion to dashboards
+        await self.broadcast_dashboard({
+            "type": "device_deleted",
+            "device_id": device_id,
+        })
+        await self.broadcast_dashboard({
+            "type": "log",
+            "level": "warn",
+            "category": "unpair",
+            "message": f"Device unpaired and deleted: {device_id}",
+            "device_id": device_id,
+            "timestamp_ms": int(time.time() * 1000),
+        })
+        return deleted
+
+    async def cleanup_stale_devices(self, mode: str = "offline") -> int:
+        online_ids = list(self.active_connections.keys())
+        if mode == "all":
+            for dev_id in list(self.active_connections.keys()):
+                await self.unpair_device(dev_id)
+            deleted_count = db.cleanup_offline_devices([])
+        else:
+            deleted_count = db.cleanup_offline_devices(online_ids)
+
+        await self.broadcast_dashboard({
+            "type": "devices_cleaned",
+            "mode": mode,
+            "deleted_count": deleted_count,
+            "devices": self.get_device_summary(),
+        })
+        await self.broadcast_dashboard({
+            "type": "log",
+            "level": "info",
+            "category": "cleanup",
+            "message": f"Cleaned up {deleted_count} stale/offline devices from registry",
+            "timestamp_ms": int(time.time() * 1000),
+        })
+        return deleted_count
+
     def get_online_roles(self) -> Set[str]:
         return set(self.role_to_device.keys())
 

@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Eidon Tracker Studio — Precision IMU Motion Capture</title>
-    <script type="module" crossorigin src="/assets/index-BQHNlGti.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BPU9d62O.css">
+    <script type="module" crossorigin src="/assets/index-CMXxEaX1.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Bsz-plyy.css">
   </head>
   <body>
     <div id="app">
@@ -91,6 +91,10 @@
             <div class="panel-header">
               <h2>Mocap Tracker Roles</h2>
               <div class="panel-header-actions">
+                <button id="btnManageDevices" class="btn btn-sm btn-secondary" title="View all paired hardware devices & clean up stale records">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg>
+                  Paired Devices (<span id="pairedDevicesCount">0</span>)
+                </button>
                 <span id="latestFwBadge" class="badge badge-secondary" title="Latest released firmware version">v1.0.0</span>
                 <button id="btnUpdateAll" class="btn btn-sm btn-ghost" title="Sequentially update all outdated online trackers over WiFi">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
@@ -435,6 +439,58 @@
           <div class="modal-footer">
             <button id="btnCancelExport" class="btn btn-secondary">Cancel</button>
             <button id="btnConfirmExportDownload" class="btn btn-primary">Download File</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Paired / Synced Hardware Trackers Modal -->
+      <div id="pairedDevicesModal" class="modal-backdrop" style="display: none;">
+        <div class="modal-dialog modal-dialog-lg">
+          <div class="modal-header">
+            <div>
+              <h3>Synced &amp; Paired Trackers</h3>
+              <p class="modal-sub">Manage all hardware devices registered in hub database. Clean up offline or stale trackers.</p>
+            </div>
+            <button id="btnClosePairedDevicesModal" class="btn-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="paired-actions-strip">
+              <div class="paired-actions-left">
+                <span id="pairedSummaryText" class="paired-summary-text">0 total registered trackers</span>
+              </div>
+              <div class="paired-actions-right">
+                <button id="btnRefreshPairedDevices" class="btn btn-sm btn-secondary" title="Refresh registry list">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                  Refresh
+                </button>
+                <button id="btnCleanOfflineDevices" class="btn btn-sm btn-danger" title="Remove all offline / stale trackers from database">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                  Clean Up Offline Trackers
+                </button>
+              </div>
+            </div>
+
+            <div class="paired-devices-table-wrapper">
+              <table class="paired-table">
+                <thead>
+                  <tr>
+                    <th>Device ID / MAC</th>
+                    <th>Role</th>
+                    <th>Hardware</th>
+                    <th>Status</th>
+                    <th>Last Seen</th>
+                    <th>Firmware</th>
+                    <th style="text-align: right;">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="pairedDevicesTableBody">
+                  <!-- Populated dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="btnClosePairedDevicesModalFooter" class="btn btn-secondary">Close</button>
           </div>
         </div>
       </div>
