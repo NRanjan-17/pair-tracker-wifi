@@ -140,14 +140,16 @@ This guide provides symptom $\rightarrow$ cause $\rightarrow$ resolution steps f
 - **Cause**:
   1. **Firewall Blocking Port 8000**: The host computer's firewall is dropping incoming TCP packets from the tracker.
   2. **AP Client Isolation**: Many guest WiFi networks isolate wireless clients from communicating with local network servers.
-  3. **Token Authentication Mismatch**: The tracker's saved token does not match the server's registered token.
+  3. **Token Authentication Mismatch**: The tracker's saved token does not match the server's registered token (causes WebSocket close code `1008`).
+  4. **MAC Format Discrepancy**: Device announces without colons (e.g. `E8DB84C2CE23`), while database or registry registered it with colons (e.g. `E8:DB:84:C2:CE:23`).
 - **Fix**:
   1. Open port 8000 in your computer's firewall:
      - **macOS**: System Settings $\rightarrow$ Network $\rightarrow$ Firewall $\rightarrow$ Options (allow python/uvicorn).
      - **Linux**: `sudo ufw allow 8000/tcp`
      - **Windows**: Add an inbound rule in Windows Defender Firewall for TCP port 8000.
   2. Disable "AP Isolation" or "Guest Mode" in your WiFi router settings.
-  3. Verify device registration: Open [http://localhost:8000/v1/devices](http://localhost:8000/v1/devices) in your browser to inspect registered tokens.
+  3. The server automatically normalizes MAC lookups across all formats and synchronizes tokens on announce. If re-flashed with a new token, the tracker will automatically update its registered credentials on announce.
+  4. Open the **"Paired Devices"** modal in the dashboard header to inspect registered devices or delete stale entries.
 
 ---
 
@@ -239,4 +241,60 @@ This guide provides symptom $\rightarrow$ cause $\rightarrow$ resolution steps f
 - **Fix**:
   1. Improve WiFi signal strength or reduce router congestion.
   2. Keep WebSocket stream loop non-blocking (cooperative scheduler handles this automatically).
+
+### ESP-12E Hangs or Freezes on Reboot When Connected to USB
+- **Symptom**: After clicking "Reboot" or performing an OTA update while plugged into computer USB, the tracker freezes and serial monitor shows no output until the board is unplugged or the manual reset button is tapped.
+- **Cause**: Calling hardware reset (`ESP.reset()`) while USB-to-UART bridge chips (CH340/CP2102) hold DTR/RTS lines causes the bootloader to read GPIO0 LOW and enter UART flashing mode (`boot mode 1,x`) instead of executing user SPI flash (`boot mode 3,x`).
+- **Fix**: The firmware uses `ESP.restart()` (clean software reset) rather than `ESP.reset()`. Furthermore, WiFi and WebSockets are disconnected with a 150 ms grace delay before executing `ESP.restart()`, ensuring the chip reboots cleanly into flash without hanging.
+
+---
+
+## 8. Over-The-Air (OTA) & Firmware Update Issues
+
+### "OTA: FAILED Battery below 30%" When Powered via USB
+- **Symptom**: Clicking "Update" returns an error `Device battery is too low for OTA (X% < 30%)` or HTTP 409 Conflict.
+- **Cause**: When developing on a workbench without a LiPo battery plugged in, the ADC reads 0% or random floating voltage. The server enforces a $\ge 30\%$ battery threshold to protect field-deployed battery trackers from brownout bricking.
+- **Fix**:
+  - In the dashboard, click the **"⚡ Update (USB)"** button which passes `force=true`.
+  - Alternatively, make an API request with `force=true`:
+    ```bash
+    curl -X POST "http://localhost:8000/v1/devices/<device_id>/ota?force=true"
+    ```
+
+### "Firmware rollback or mismatch: announced X, expected Y"
+- **Symptom**: Dashboard OTA status switches to `FAILED` with message `Firmware rollback or mismatch: announced 1.0.0, expected 1.0.2`.
+- **Cause**:
+  1. The target binary was compiled with an older `#define FIRMWARE_VERSION` macro in `firmware/src/core/Version.h`. When the device booted the new binary, it announced its compiled version (`1.0.0`), which failed the server's rollback safeguard check.
+  2. If the new firmware panicked or failed to connect to WiFi within the timeout window, the bootloader automatically rolled back to the previous slot.
+- **Fix**:
+  1. Verify `firmware/src/core/Version.h` has the correct target version string.
+  2. Rebuild the firmware binaries (`make firmware-bin`) and regenerate releases (`python3 tools/release_firmware.py <version>`).
+
+### SHA-256 Mismatch During Verification
+- **Symptom**: Serial monitor prints `OTA SHA-256 mismatch! Got X, expected Y` and dashboard shows `OTA: FAILED (SHA-256 mismatch)`.
+- **Cause**: The downloaded binary bytes did not match the hash in `manifest.json` (partial download or corrupt file).
+- **Behavior**: The tracker aborts the update (`Update.abort()`), does **not** reboot, and immediately resumes normal sensor streaming on its existing firmware. No manual recovery is needed.
+
+### Does OTA Overwrite WiFi Credentials or Device Roles?
+- **No**. OTA updates strictly replace the application binary (`app0`/`app1` on ESP32-C6, sketch space on ESP-12E).
+- Persistent configuration is stored in **NVS** (`pair_cfg` namespace) on ESP32-C6 and **LittleFS** (`/pair_cfg.json`) on ESP-12E.
+- Network credentials, device token, server IP/port, and assigned body roles remain 100% intact across updates.
+
+---
+
+## 9. LED Light Blink States Reference Table
+
+The onboard status LED provides instant physical diagnostic feedback on the tracker's internal state.
+
+| Priority | State / Mode | LED Behavior | Frequency / Timing | Meaning & Action |
+|:---:|:---|:---|:---|:---|
+| **1** | **Identify Strobe** | Rapid High-Speed Strobe | **10 Hz** (50 ms ON, 50 ms OFF) | Triggered via Dashboard "Identify / Blink" button. Strobe runs for 3–5 seconds to locate physical tracker. |
+| **2** | **WiFi Disconnected / Connecting** | Rapid Continuous Blink | **2.5 Hz** (200 ms ON, 200 ms OFF) | Tracker is booting, associating with 2.4 GHz WiFi, or attempting to reconnect. |
+| **3** | **Connected & Streaming (Normal)** | Gentle Heartbeat Beacon | **100 ms ON every 2000 ms** (1.9 s OFF) | Normal operational state. Connected to server WebSocket and streaming 48 Hz IMU frames. |
+| **—** | **Initial Hardware Boot** | LED OFF | Steady OFF (~100 ms) | Power applied; microcontroller running startup bootloader before main loop begins. |
+| **—** | **OTA Update in Progress** | Off / Beacon depending on transfer | — | Streaming paused while downloading binary chunks into secondary partition. |
+
+> [!TIP]
+> On the **Seeed Studio XIAO ESP32-C6**, the User LED is on **GPIO 15** (active HIGH).
+> On the **ESP-12E / NodeMCU**, the onboard blue LED is on **GPIO 2** (active LOW) with secondary LED on **GPIO 16**.
 

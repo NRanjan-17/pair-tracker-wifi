@@ -24,7 +24,22 @@ The ESP32-C6 has 4MB (0x400000 bytes) of onboard SPI NOR flash. To support robus
 
 ---
 
-## 2. Bootloader Rollback & App Self-Validation
+## 2. Configuration Preservation Across OTA Updates
+
+A common concern during OTA updates is whether device configurations (WiFi credentials, server IP/port, device token, and assigned body tracking role) must be re-provisioned after an update.
+
+> [!NOTE]
+> **Only the Firmware Binary is Transferred:**
+> During an OTA update, **only the compiled firmware executable binary (`firmware.bin`) is downloaded and written to flash**. Device configuration is stored in dedicated, physically separate non-volatile storage that is never overwritten by OTA:
+>
+> - **ESP32-C6**: Configuration is managed via the ESP-IDF Non-Volatile Storage (**NVS**) subsystem in the `pair_cfg` namespace located in the dedicated `nvs` partition (`0x9000` - `0xE000`). The OTA update writes strictly to the inactive application partition (`app0` or `app1`). The `nvs` partition remains completely untouched.
+> - **ESP-12E (ESP8266)**: Configuration is stored in `/pair_cfg.json` on the **LittleFS** filesystem located at the top of flash memory (`0x300000` - `0x400000`). OTA writes exclusively to the sketch flash region (`U_FLASH`). The LittleFS filesystem partition remains completely untouched.
+>
+> Upon rebooting into the new firmware, the tracker immediately mounts its non-volatile storage, reads all existing network credentials, tokens, and body roles, and reconnects to the server without any user intervention.
+
+---
+
+## 3. Bootloader Rollback & App Self-Validation
 
 ### Rollback Support in ESP32-C6 Core
 The ESP32-C6 Arduino framework (`framework-arduinoespressif32 @ 3.1.3`, ESP-IDF 5.3) has `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` enabled by default in `sdkconfig.h`.
@@ -39,33 +54,45 @@ The ESP32-C6 Arduino framework (`framework-arduinoespressif32 @ 3.1.3`, ESP-IDF 
    ```
    This confirms the new firmware is stable and cancels the rollback timer.
 
+### ESP8266 (ESP-12E) Clean Software Reboot
+On ESP8266 dev boards (e.g. NodeMCU v2/v3), hardware watchdog resets (`ESP.reset()`) combined with external USB-to-UART bridge chips (CH340, CP2102) holding DTR/RTS lines can cause boot strapping pin violations (`GPIO0`, `GPIO2`, `GPIO15`), locking the chip into UART download mode (`boot mode 1,x`).
+
+To guarantee reliable post-OTA boot into the updated firmware:
+- The firmware executes a clean software restart via `ESP.restart()` rather than a hardware reset.
+- WebSockets and WiFi are cleanly torn down (`WiFi.disconnect(true); WiFi.mode(WIFI_OFF); delay(150);`) prior to calling `ESP.restart()`.
+- The ESP8266 reboots directly into user SPI flash without hanging, even when connected to a host computer over USB.
+
 ---
 
-## 3. Server Architecture & Endpoints
+## 4. Server Architecture & Endpoints
 
-### 1. Release Packaging (`make release`)
-The Makefile target `make release` (or `make release VERSION=x.y.z`):
-- Builds the firmware via PlatformIO.
-- Copies the binary to `server/firmware_bin/<version>/firmware.bin`.
-- Computes SHA-256 and byte size.
-- Writes `server/firmware_bin/<version>/manifest.json`:
+### 1. Release Packaging (`make release` or `tools/release_firmware.py`)
+The release packaging workflow:
+- Builds firmware for both `seeed_xiao_esp32c6` and `esp12e` via PlatformIO.
+- Automatically copies target binaries into `server/firmware_bin/<hw>/<version>/firmware.bin`.
+- Computes SHA-256 and byte sizes.
+- Writes per-target `manifest.json`:
   ```json
   {
-    "version": "1.0.1",
-    "sha256": "3bf586472d4f29b6590788aa67ccf04c9fd99da229bde9c74eea07346b749099",
-    "size": 1314944,
+    "version": "1.0.0",
+    "hw": "esp32c6",
+    "sha256": "428d1172e9459eeefa84a7ab8975f2dd1d19c06cbef1d4fc1de6d57bb0d609fc",
+    "size": 1315376,
     "min_protocol": 1
   }
   ```
 
 ### 2. REST Endpoints
-- `GET /v1/firmware/latest`: Returns the manifest of the highest semver release.
-- `GET /v1/firmware/{version}/firmware.bin`: Streams the versioned binary. **Device-token authenticated** via `Authorization: Bearer <token>` or `?token=<token>`. Rejects unauthenticated requests with `401` and unauthorized requests with `403`.
+- `GET /v1/firmware/latest`: Returns the manifest of the highest semver release (supports optional `?hw=esp32c6` or `?hw=esp12e`).
+- `GET /v1/firmware/{hw}/{version}/firmware.bin` & `GET /v1/firmware/{version}/firmware.bin`: Streams the versioned binary. **Device-token authenticated** via `Authorization: Bearer <token>` or `?token=<token>`. Rejects unauthenticated requests with `401` and unauthorized requests with `403`.
 - `POST /v1/devices/{id}/ota`: Initiates an OTA update for device `{id}`.
+  - **Query & JSON Body Parameters**:
+    - `version`: Target version string (defaults to `latest`).
+    - `force`: Boolean (`true` / `false`). Bypasses the 30% battery threshold when updating devices running on USB tether power.
   - **Conflict Safety Guarantees (HTTP 409 Conflict):**
     - Rejected with `409` if a session recording is currently active (`active_session_id is not None`).
     - Rejected with `409` if the device is offline.
-    - Rejected with `409` if the device's last reported battery is below `30%`.
+    - Rejected with `409` if the device's last reported battery is below `30%` (unless `force=true` is provided).
   - Dispatches JSON `"ota"` command over device's WebSocket.
 - `GET /v1/devices/{id}/ota`: Returns active or last known OTA job for device.
 - `GET /v1/ota/jobs`: Returns list of all tracked OTA jobs.
@@ -83,7 +110,7 @@ Each OTA operation is tracked as a state machine job with real-time WebSocket br
 
 ---
 
-## 4. Protocol Version Flagging
+## 5. Protocol Version Flagging
 
 Every announce payload includes the device's protocol version:
 ```json
@@ -101,18 +128,19 @@ The server compares `protocol_version` against `REQUIRED_PROTOCOL_VERSION` (curr
 
 ---
 
-## 5. Dashboard UI Controls
+## 6. Dashboard UI Controls
 
 - **Latest Firmware Header**: Shows `Latest: vX.Y.Z` with real-time update alerts.
 - **Per-Device Cards**:
   - Displays `Firmware: v<current>` with `✓ Up to date` or `⬆️ v<latest> avail`.
   - Live OTA job progress bar and status badge (`DOWNLOADING 45%`, `VERIFYING`, `REBOOTING`, `SUCCESS`, `FAILED`).
-  - **"Update" Button**: Triggers OTA for individual device. Disabled if device is offline or battery is below 30%.
+  - **"Update" Button**: Triggers OTA for individual device. Enabled when battery $\ge 30\%$.
+  - **"⚡ Update (USB)" Button**: Displayed alongside or when battery $< 30\%$ (or when tethered to USB benchtop power), triggering the update with `force=true`.
   - **"Update all (one at a time)" Button**: Sequentially queues and updates all outdated online devices one after another, waiting for each device to reboot and report `success` before proceeding to the next.
 
 ---
 
-## 6. Real-Device Verification Test Plan
+## 7. Real-Device Verification Test Plan
 
 Follow these steps with physical hardware to verify OTA functionality:
 

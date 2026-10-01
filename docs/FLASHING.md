@@ -66,10 +66,10 @@ The server will serve:
    - **Step 1: Connecting via Web Serial**: Syncs with ROM bootloader, identifies the chip family (ESP32-C6 vs ESP8266 / ESP-12E; prompts user if ambiguous), and reads the hardware MAC address.
    - **Step 2: Registering Device**: Calls `POST /v1/devices/register` with the MAC address and role.
    - **Step 3: Downloading Target Binaries**:
-     - *For ESP32-C6*: Fetches `/v1/firmware/manifest?hw=esp32c6` and downloads 4 partitions: `bootloader.bin` (0x0), `partitions.bin` (0x8000), `boot_app0.bin` (0xe000), and `firmware.bin` (0x10000).
-     - *For ESP-12E*: Fetches `/v1/firmware/manifest?hw=esp12e` and downloads a single flat image `firmware.bin` (0x0).
+     - *For ESP32-C6*: Fetches `/v1/firmware/manifest?hw=esp32c6` (resolving the latest release dynamically from disk), downloading `bootloader.bin` (0x0), `partitions.bin` (0x8000), `boot_app0.bin` (0xe000), and `firmware.bin` (0x10000).
+     - *For ESP-12E*: Fetches `/v1/firmware/manifest?hw=esp12e` and downloads the flat image `firmware.bin` (0x0).
    - **Step 4: Writing Flash**: Compresses and writes the partitions to SPI NOR flash with a live progress bar.
-   - **Step 5: Serial Provisioning**: Performs a hardware reset, opens the serial CLI at **115,200 baud for ESP32-C6** or **9600 baud for ESP-12E**, sends the `set` commands (`ssid`, `pass`, `server`, `port`, `token`, `role`), and issues `reboot`.
+   - **Step 5: Serial Provisioning**: Performs a clean reset, opens the serial CLI at **115,200 baud for ESP32-C6** or **9600 baud for ESP-12E**, sends the `set` commands (`ssid`, `pass`, `server`, `port`, `token`, `role`), and issues `reboot`.
    - **Step 6: WiFi Announce**: Prompts **"Switch ON the tracker"** (if powered by battery switch) and polls `GET /v1/devices` until the tracker announces.
 7. **Success Confirmation**:
    The wizard displays a green success badge showing the tracker's MAC address, hardware model, assigned role, and online status. Disconnect the USB cable and label the tracker.
@@ -198,10 +198,10 @@ Before strapping a tracker to an actor, perform this rapid physical checkout:
 
 1. **Battery Voltage**: Connect LiPo battery and measure with multimeter or check serial output. Voltage must be $\ge 3.7\text{ V}$ (never below $3.0\text{ V}$).
 2. **Power Switch**: Slide toggle switch to ON.
-3. **LED Behavior**:
-   - **LED OFF**: Initial boot and WiFi association in progress (1–3 seconds).
-   - **LED SOLID ON**: Connected to WiFi, resolved server, and WebSocket `/v1/devices/{id}/stream` established.
-   - **FAST BLINK (150 ms pulse)**: Identify command triggered from dashboard.
+3. **LED Status Beacon**:
+   - **RAPID BLINK (2.5 Hz, 200 ms ON / 200 ms OFF)**: Initial boot, associating with WiFi, or reconnecting to network.
+   - **GENTLE BEACON PULSE (100 ms ON every 2.0 seconds)**: Connected to WiFi, authenticated with server, and actively streaming IMU frames.
+   - **FAST STROBE (10 Hz, 50 ms toggle)**: Identify strobe command triggered from the dashboard to locate hardware.
 4. **Dashboard Check**:
    - Open [http://localhost:5173](http://localhost:5173).
    - Confirm tracker card appears in **Trackers** tab.

@@ -13,8 +13,9 @@ The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 m
 - **Professional Workstation Dashboard**: Dark-mode Linear-aesthetic UI featuring segmented pill filters (All, Core, Arms, Legs, Online), real-time loss and heap telemetry, and live streaming console drawer.
 - **Real-Time 3D Biomechanical Visualizer**: Three.js kinematic avatar with 75 ms jitter buffer and SLERP interpolation, bone-aligned tracker indicators, N-pose calibration, and yaw drift re-zeroing.
 - **Web Serial USB Flashing**: In-browser firmware flashing via Web Serial (`esptool-js`) with automatic chip detection (ESP8266, ESP32-C6, ESP32-S3), custom WiFi credential provisioning, and role assignment.
-- **Over-The-Air (OTA) Updates**: Hardware-aware binary distribution with automatic manifest synthesis, progress telemetry, dual-slot rollback protection, and **USB low-battery override** for benchtop testing.
-- **Clean ESP8266 Hardware Reboot**: Boot strapping pin release (`GPIO0`, `GPIO2`, `GPIO15`) and clean connection teardown prior to hardware reset to prevent ESP-12E bootloader hangs.
+- **Over-The-Air (OTA) Updates**: Hardware-aware binary distribution with dynamic manifest resolution, progress telemetry, dual-slot rollback protection, configuration non-volatility (NVS/LittleFS), and **USB low-battery override** for benchtop testing.
+- **Clean ESP8266 Software Reboot**: Clean connection teardown (`WiFi.disconnect`, `WiFi.mode(WIFI_OFF)`) and direct software restart (`ESP.restart()`) preventing ESP-12E / NodeMCU bootloader hangs on USB.
+- **LED Beacon Diagnostics**: Prioritized multi-state onboard LED indicators: 10 Hz identify strobe, 2.5 Hz network connection search, and 2.0 s gentle heartbeat beacon while streaming.
 - **Paired Devices Management**: Dedicated modal to inspect all registered trackers, unpair individual devices, or perform one-click cleanup of offline/stale devices from the SQLite database.
 - **High-Throughput Recording & Export**: Zero-copy PyArrow Parquet recording, session playback with scrubbing and variable speeds, and export to BVH (ZXY Euler), calibrated CSV, resampled Parquet, and session metadata JSON.
 
@@ -75,7 +76,7 @@ The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 m
 | **Serial CLI Baud** | 115,200 baud | 9,600 baud (ESP-12E crystal compatibility) |
 | **OTA Mechanism** | Dual 1984 KB partitions (`app0`/`app1`) | Single flash binary replace + clean strapping reboot |
 | **I2C Pinout** | SDA: GPIO21, SCL: GPIO22 | SDA: GPIO4 (D2), SCL: GPIO5 (D1) |
-| **Reboot Strapping Pins** | Internal ROM reset | Pin release (`GPIO0`/`GPIO2` pull-up, `GPIO15` pull-down) |
+| **Reboot Strapping Pins** | Internal ROM reset | Clean `ESP.restart()` software restart with WiFi teardown |
 
 ---
 

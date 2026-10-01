@@ -50,16 +50,24 @@ Each connected or configured tracker is displayed in a reactive card under the *
 - **Last Seen**: Relative time since last received packet (e.g. `1s ago`, `5m ago`, or `Never`).
 - **Firmware Version**:
   - Displays current active version (e.g., `v1.0.0`).
-  - Badge `✓ Up to date` if matching the server's latest release.
-  - Badge `⬆️ v1.0.1 avail` if a newer firmware release exists in `server/firmware_bin/`.
+  - Badge `✓ Up to date` if matching the dynamically resolved latest manifest from `/v1/firmware/manifest`.
+  - Badge `⬆️ v<latest> avail` if a newer release exists on disk.
   - Badge `⚠️ Proto vX outdated` if the device's protocol version is below `REQUIRED_PROTOCOL_VERSION`.
 - **OTA Job Panel**: Appears dynamically during firmware updates showing status (`QUEUED`, `DOWNLOADING (X%)`, `VERIFYING`, `REBOOTING`, `SUCCESS`, or `FAILED`) with a progress bar.
 
 ### Card Footer & Actions
 - **MAC Address**: Hardware identifier (e.g., `C8:2E:18:1C:63:F4`).
-- **Blink (`Identify`)**: Sends an identify command over WebSocket. The tracker's onboard blue LED flashes rapidly (150 ms pulses) for 5 seconds to locate physical hardware.
-- **Reboot**: Sends a reboot command to restart the ESP32-C6 remotely.
-- **Update**: Triggers an Over-The-Air firmware upgrade to the latest version. Disabled if battery $< 30\%$ or during active session recording.
+- **Blink (`Identify`)**: Sends an identify command over WebSocket. The tracker's onboard status LED pulses with a high-speed 10 Hz strobe (50 ms toggle) for 5 seconds to pinpoint physical hardware.
+- **Reboot**: Sends a reboot command to cleanly restart the microcontroller remotely.
+- **Update**: Triggers an Over-The-Air firmware upgrade to the latest dynamically resolved version. Enabled when battery $\ge 30\%$.
+- **⚡ Update (USB)**: Displayed when device battery is $< 30\%$ or when operating on USB benchtop power. Bypasses the battery threshold (`force=true`) so developers can update tethered hardware.
+
+### Paired Devices Management Modal
+Clicking the **"Paired Devices"** button in the top navigation toolbar opens a management modal:
+- **Registry Inspection**: Displays all registered trackers saved in the server's SQLite database (`db.py`).
+- **Device Details**: Shows MAC address, assigned role, reported firmware version, hardware architecture (`esp32c6` / `esp12e`), token status, and last seen relative timestamp.
+- **Unpair Individual Device**: Removes the tracker record from SQLite, clearing any persistent role conflicts.
+- **Clean Offline**: Purges all currently offline devices from the database in a single click, keeping the environment clean.
 
 ---
 
