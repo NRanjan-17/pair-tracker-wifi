@@ -20,12 +20,10 @@ export interface SkeletonData {
 /**
  * Coordinate frames conversion:
  * BNO085 is right-handed Z-up: X=right, Y=forward, Z=up.
- * Three.js is right-handed Y-up: X=right, Y=up, Z=-forward (or backward).
- * Axis mapping: X_three = X_bno, Y_three = Z_bno, Z_three = -Y_bno.
+ * Three.js is right-handed Y-up: X=right, Y=up, Z=-forward.
  * Converts [qw, qx, qy, qz] to new THREE.Quaternion(x, y, z, w).
  */
 export function bnoToThreeQuat(qw: number, qx: number, qy: number, qz: number): THREE.Quaternion {
-  // THREE.Quaternion constructor takes (x, y, z, w)
   return new THREE.Quaternion(qx, qz, -qy, qw).normalize();
 }
 
@@ -36,8 +34,17 @@ export class AvatarRig {
 
   public boneGroups: Map<string, THREE.Group> = new Map();
   public boneMeshes: Map<string, THREE.Mesh[]> = new Map();
-  public onlineMaterials: Map<string, THREE.Material> = new Map();
-  public offlineMaterial: THREE.MeshStandardMaterial;
+  public trackerLedMeshes: Map<string, THREE.Mesh> = new Map();
+
+  // High-End PBR Studio Materials
+  public onlineChassisMaterial: THREE.MeshStandardMaterial;
+  public jointPivotMaterial: THREE.MeshStandardMaterial;
+  public trackerPuckMaterial: THREE.MeshStandardMaterial;
+  public activeSensorLedMaterial: THREE.MeshStandardMaterial;
+  public inactiveSensorLedMaterial: THREE.MeshStandardMaterial;
+  public offlineChassisMaterial: THREE.MeshStandardMaterial;
+  public visorMaterial: THREE.MeshStandardMaterial;
+  public accentLineMaterial: THREE.MeshBasicMaterial;
 
   // Calibration state
   public isCalibrated: boolean = false;
@@ -48,16 +55,66 @@ export class AvatarRig {
     this.scene = scene;
     this.skeleton = skeletonConfig as SkeletonData;
     this.rootGroup = new THREE.Group();
-    this.rootGroup.name = "avatar_root";
+    this.rootGroup.name = 'avatar_root';
     this.scene.add(this.rootGroup);
 
-    // Muted slate gray material for offline bones
-    this.offlineMaterial = new THREE.MeshStandardMaterial({
+    // 1. Titanium / Carbon chassis (Professional studio mocap aesthetic)
+    this.onlineChassisMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1e2838,
+      metalness: 0.62,
+      roughness: 0.32,
+    });
+
+    // 2. Machined Aluminum Joint Gimbals
+    this.jointPivotMaterial = new THREE.MeshStandardMaterial({
       color: 0x475569,
-      metalness: 0.1,
+      metalness: 0.85,
+      roughness: 0.18,
+    });
+
+    // 3. Eidon IMU Tracker Puck Enclosure (Dark matte composite)
+    this.trackerPuckMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      metalness: 0.45,
+      roughness: 0.35,
+    });
+
+    // 4. Active Sensor LED Glow Ring (Electric Cyan)
+    this.activeSensorLedMaterial = new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      emissive: 0x00e5ff,
+      emissiveIntensity: 0.85,
+      metalness: 0.2,
+      roughness: 0.2,
+    });
+
+    // 5. Inactive / Standby Sensor LED Ring (Dark Slate)
+    this.inactiveSensorLedMaterial = new THREE.MeshStandardMaterial({
+      color: 0x263345,
+      emissive: 0x000000,
+      emissiveIntensity: 0,
       roughness: 0.8,
+    });
+
+    // 6. Phantom Translucent Chassis for Unbound / Offline Limbs
+    this.offlineChassisMaterial = new THREE.MeshStandardMaterial({
+      color: 0x151c28,
+      metalness: 0.2,
+      roughness: 0.85,
       transparent: true,
-      opacity: 0.45,
+      opacity: 0.36,
+    });
+
+    // 7. Dark Mirror-Finish Helmet Visor
+    this.visorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x030712,
+      metalness: 0.95,
+      roughness: 0.05,
+    });
+
+    // 8. Minimalist Accent Line
+    this.accentLineMaterial = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
     });
 
     this.buildSkeleton();
@@ -70,16 +127,6 @@ export class AvatarRig {
       group.name = `bone_${bone.name}`;
       group.position.set(bone.position[0], bone.position[1], bone.position[2]);
       this.boneGroups.set(bone.name, group);
-
-      // Create materials for online state
-      const mat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(bone.color),
-        metalness: 0.7,
-        roughness: 0.25,
-        emissive: new THREE.Color(bone.color),
-        emissiveIntensity: 0.18,
-      });
-      this.onlineMaterials.set(bone.name, mat);
       this.boneMeshes.set(bone.name, []);
     }
 
@@ -97,103 +144,146 @@ export class AvatarRig {
         }
       }
 
-      // 3. Create visual meshes (joint + limb segment)
+      // 3. Create high-fidelity biomechanical meshes
       this.createBoneMesh(bone, group);
     }
   }
 
   private createBoneMesh(bone: BoneConfig, group: THREE.Group) {
-    const mat = this.onlineMaterials.get(bone.name)!;
     const meshes: THREE.Mesh[] = [];
 
-    // A. Joint pivot sphere
-    const jointRadius = bone.radius * 1.35;
-    const jointGeo = new THREE.SphereGeometry(jointRadius, 16, 16);
-    const jointMesh = new THREE.Mesh(jointGeo, mat);
+    // A. Precision Joint Pivot (Spherical Gimbal + Outer Bearing Collar)
+    const jointRadius = bone.radius * 1.15;
+    const jointGeo = new THREE.SphereGeometry(jointRadius, 20, 20);
+    const jointMesh = new THREE.Mesh(jointGeo, this.jointPivotMaterial);
     jointMesh.castShadow = true;
     group.add(jointMesh);
     meshes.push(jointMesh);
 
-    // B. Limb / Body Geometry
+    // Subtle aluminum bearing ring around the joint pivot
+    const collarGeo = new THREE.CylinderGeometry(jointRadius * 1.12, jointRadius * 1.12, jointRadius * 0.45, 18);
+    const collarMesh = new THREE.Mesh(collarGeo, this.jointPivotMaterial);
+    group.add(collarMesh);
+    meshes.push(collarMesh);
+
+    // B. Anatomical & High-Precision Limb Geometry
     if (bone.name === 'chest') {
-      // Stylized Torso
-      const torsoGeo = new THREE.BoxGeometry(0.30, bone.length, 0.18);
-      const torsoMesh = new THREE.Mesh(torsoGeo, mat);
-      torsoMesh.position.set(0, -bone.length * 0.35, 0);
-      torsoMesh.castShadow = true;
-      group.add(torsoMesh);
-      meshes.push(torsoMesh);
+      // 1. Upper Torso / Pectoral Armor
+      const upperTorsoGeo = new THREE.CylinderGeometry(0.14, 0.12, bone.length * 0.65, 8);
+      const upperTorso = new THREE.Mesh(upperTorsoGeo, this.onlineChassisMaterial);
+      upperTorso.position.set(0, -bone.length * 0.28, 0);
+      upperTorso.rotation.y = Math.PI / 8;
+      upperTorso.scale.set(1.15, 1, 0.72);
+      upperTorso.castShadow = true;
+      group.add(upperTorso);
+      meshes.push(upperTorso);
 
-      // Robotic Neck & Head Visor
-      const neckGeo = new THREE.CylinderGeometry(0.04, 0.045, 0.08, 12);
-      const neckMesh = new THREE.Mesh(neckGeo, mat);
-      neckMesh.position.set(0, 0.10, 0);
-      group.add(neckMesh);
-      meshes.push(neckMesh);
+      // 2. Segmented Lower Spine & Rib Cage
+      const spineGeo = new THREE.CylinderGeometry(0.10, 0.09, bone.length * 0.35, 8);
+      const spineMesh = new THREE.Mesh(spineGeo, this.jointPivotMaterial);
+      spineMesh.position.set(0, -bone.length * 0.65, 0);
+      spineMesh.scale.set(1.05, 1, 0.7);
+      spineMesh.castShadow = true;
+      group.add(spineMesh);
+      meshes.push(spineMesh);
 
-      const headGeo = new THREE.SphereGeometry(0.09, 16, 16);
-      const headMesh = new THREE.Mesh(headGeo, mat);
-      headMesh.position.set(0, 0.20, 0);
-      group.add(headMesh);
-      meshes.push(headMesh);
-
-      // Cyber visor band
-      const visorGeo = new THREE.BoxGeometry(0.12, 0.04, 0.08);
-      const visorMat = new THREE.MeshStandardMaterial({
-        color: 0x38bdf8,
-        emissive: 0x38bdf8,
-        emissiveIntensity: 0.8,
-      });
-      const visorMesh = new THREE.Mesh(visorGeo, visorMat);
-      visorMesh.position.set(0, 0.20, 0.06);
-      group.add(visorMesh);
-
-      // Pelvis connector
-      const pelvisGeo = new THREE.BoxGeometry(0.24, 0.10, 0.16);
-      const pelvisMesh = new THREE.Mesh(pelvisGeo, mat);
-      pelvisMesh.position.set(0, -bone.length * 0.72, 0);
+      // 3. Pelvis Saddle
+      const pelvisGeo = new THREE.CylinderGeometry(0.12, 0.10, 0.12, 8);
+      const pelvisMesh = new THREE.Mesh(pelvisGeo, this.onlineChassisMaterial);
+      pelvisMesh.position.set(0, -bone.length * 0.85, 0);
+      pelvisMesh.scale.set(1.1, 1, 0.75);
       group.add(pelvisMesh);
       meshes.push(pelvisMesh);
 
+      // 4. Clavicle / Collarbone Bridge
+      const collarBarGeo = new THREE.BoxGeometry(0.34, 0.035, 0.05);
+      const collarBar = new THREE.Mesh(collarBarGeo, this.jointPivotMaterial);
+      collarBar.position.set(0, 0.12, 0);
+      group.add(collarBar);
+      meshes.push(collarBar);
+
+      // 5. Sleek Neck Pillar
+      const neckGeo = new THREE.CylinderGeometry(0.038, 0.045, 0.09, 16);
+      const neckMesh = new THREE.Mesh(neckGeo, this.jointPivotMaterial);
+      neckMesh.position.set(0, 0.11, 0);
+      group.add(neckMesh);
+      meshes.push(neckMesh);
+
+      // 6. Aerodynamic Studio Mocap Helmet (Replaces the toy sphere/box visor)
+      const headGroup = new THREE.Group();
+      headGroup.position.set(0, 0.22, 0);
+
+      // Helmet shell
+      const helmetGeo = new THREE.CylinderGeometry(0.075, 0.062, 0.15, 10);
+      const helmetMesh = new THREE.Mesh(helmetGeo, this.onlineChassisMaterial);
+      helmetMesh.scale.set(0.9, 1, 1.15);
+      helmetMesh.castShadow = true;
+      headGroup.add(helmetMesh);
+      meshes.push(helmetMesh);
+
+      // Dark mirror-finish recessed visor band
+      const visorGeo = new THREE.CylinderGeometry(0.076, 0.064, 0.05, 10, 1, false, 0, Math.PI);
+      const visorMesh = new THREE.Mesh(visorGeo, this.visorMaterial);
+      visorMesh.position.set(0, 0.015, 0.005);
+      visorMesh.rotation.y = Math.PI / 2;
+      visorMesh.scale.set(0.92, 1, 1.18);
+      headGroup.add(visorMesh);
+
+      // Fine visor cyan edge accent
+      const visorLineGeo = new THREE.BoxGeometry(0.12, 0.006, 0.02);
+      const visorLine = new THREE.Mesh(visorLineGeo, this.accentLineMaterial);
+      visorLine.position.set(0, 0.04, 0.08);
+      headGroup.add(visorLine);
+
+      group.add(headGroup);
+
     } else if (bone.name.includes('hand')) {
-      // Hand paddle / palm
-      const palmGeo = new THREE.BoxGeometry(0.065, bone.length, 0.035);
-      const palmMesh = new THREE.Mesh(palmGeo, mat);
-      palmMesh.position.set(0, -bone.length * 0.5, 0);
+      // Sleek Geometric Palm with minimalist finger profile
+      const palmGeo = new THREE.BoxGeometry(0.055, bone.length * 0.7, 0.026);
+      const palmMesh = new THREE.Mesh(palmGeo, this.onlineChassisMaterial);
+      palmMesh.position.set(0, -bone.length * 0.45, 0);
       palmMesh.castShadow = true;
       group.add(palmMesh);
       meshes.push(palmMesh);
 
-      // Hand tip accent
-      const tipGeo = new THREE.BoxGeometry(0.05, 0.04, 0.03);
-      const tipMesh = new THREE.Mesh(tipGeo, mat);
-      tipMesh.position.set(0, -bone.length * 0.95, 0);
+      // Articulated hand knuckle tip
+      const tipGeo = new THREE.BoxGeometry(0.046, bone.length * 0.35, 0.02);
+      const tipMesh = new THREE.Mesh(tipGeo, this.jointPivotMaterial);
+      tipMesh.position.set(0, -bone.length * 0.88, 0);
       group.add(tipMesh);
       meshes.push(tipMesh);
 
+    } else if (bone.name.includes('foot')) {
+      // Sleek athletic mocap sole
+      const footGeo = new THREE.BoxGeometry(0.065, 0.042, bone.length);
+      const footMesh = new THREE.Mesh(footGeo, this.onlineChassisMaterial);
+      footMesh.position.set(0, -0.02, bone.length * 0.42);
+      footMesh.castShadow = true;
+      group.add(footMesh);
+      meshes.push(footMesh);
+
+      // Heel reinforcement
+      const heelGeo = new THREE.BoxGeometry(0.062, 0.05, 0.06);
+      const heelMesh = new THREE.Mesh(heelGeo, this.jointPivotMaterial);
+      heelMesh.position.set(0, -0.01, 0.02);
+      group.add(heelMesh);
+      meshes.push(heelMesh);
+
     } else {
-      // Cylindrical limb bone
-      const cylGeo = new THREE.CylinderGeometry(bone.radius * 0.85, bone.radius * 1.05, bone.length, 14);
-      const cylMesh = new THREE.Mesh(cylGeo, mat);
+      // Tapered Carbon-Fiber Cylindrical Limb Segment
+      const cylGeo = new THREE.CylinderGeometry(bone.radius * 0.82, bone.radius * 1.05, bone.length, 16);
+      const cylMesh = new THREE.Mesh(cylGeo, this.onlineChassisMaterial);
       cylMesh.castShadow = true;
 
-      // Orient cylinder along direction vector
       const dir = bone.direction;
       if (dir[1] === -1) {
-        // Downward (-Y)
         cylMesh.position.set(0, -bone.length * 0.5, 0);
       } else if (dir[0] === 1) {
-        // Lateral Right (+X)
         cylMesh.rotation.z = -Math.PI / 2;
         cylMesh.position.set(bone.length * 0.5, 0, 0);
       } else if (dir[0] === -1) {
-        // Lateral Left (-X)
         cylMesh.rotation.z = Math.PI / 2;
         cylMesh.position.set(-bone.length * 0.5, 0, 0);
-      } else if (dir[2] === 1) {
-        // Forward (+Z, feet)
-        cylMesh.rotation.x = Math.PI / 2;
-        cylMesh.position.set(0, 0, bone.length * 0.5);
       } else {
         cylMesh.position.set(0, -bone.length * 0.5, 0);
       }
@@ -202,21 +292,54 @@ export class AvatarRig {
       meshes.push(cylMesh);
     }
 
+    // C. Physical Eidon IMU Tracker Puck Module Mounted to Limb
+    // Represents the actual physical hardware module and displays a glowing status ring!
+    const trackerGroup = new THREE.Group();
+    const puckRadius = 0.024;
+    const puckHeight = 0.012;
+
+    const puckGeo = new THREE.CylinderGeometry(puckRadius, puckRadius * 1.05, puckHeight, 16);
+    const puckMesh = new THREE.Mesh(puckGeo, this.trackerPuckMaterial);
+    puckMesh.rotation.x = Math.PI / 2;
+    trackerGroup.add(puckMesh);
+
+    // Glowing LED status ring on top of the tracker module
+    const ledRingGeo = new THREE.TorusGeometry(puckRadius * 0.65, 0.0035, 8, 20);
+    const ledRingMesh = new THREE.Mesh(ledRingGeo, this.inactiveSensorLedMaterial);
+    ledRingMesh.position.set(0, 0, puckHeight * 0.55);
+    trackerGroup.add(ledRingMesh);
+    this.trackerLedMeshes.set(bone.name, ledRingMesh);
+
+    // Position puck on the outer visible surface of each bone
+    if (bone.name === 'chest') {
+      trackerGroup.position.set(0, -bone.length * 0.28, 0.10);
+    } else if (bone.name.includes('thigh')) {
+      trackerGroup.position.set(bone.direction[0] !== 0 ? 0 : 0.048, -bone.length * 0.45, 0.045);
+    } else if (bone.name.includes('shin')) {
+      trackerGroup.position.set(0, -bone.length * 0.45, 0.045);
+    } else if (bone.name.includes('upper_arm')) {
+      trackerGroup.position.set(bone.name.includes('left') ? 0.048 : -0.048, -bone.length * 0.45, 0.01);
+    } else if (bone.name.includes('forearm')) {
+      trackerGroup.position.set(0, -bone.length * 0.45, 0.04);
+    } else if (bone.name.includes('hand')) {
+      trackerGroup.position.set(0, -bone.length * 0.42, 0.022);
+    } else if (bone.name.includes('foot')) {
+      trackerGroup.position.set(0, 0.02, bone.length * 0.45);
+      trackerGroup.rotation.x = -Math.PI / 2;
+    } else {
+      trackerGroup.position.set(0, 0, bone.radius * 1.1);
+    }
+
+    group.add(trackerGroup);
+
     this.boneMeshes.set(bone.name, meshes);
   }
 
-  /**
-   * Calibrate pose: user stands facing forward in N-pose (arms down).
-   * Computes per-bone offset so the avatar matches the N-pose (Identity world rotation).
-   */
   public calibratePose(currentSensorQuats: Map<string, THREE.Quaternion>) {
     this.calibOffsets.clear();
     this.reZeroYawOffset.set(0, 0, 0, 1);
 
     currentSensorQuats.forEach((sensorQuat, role) => {
-      // In rest N-pose, each bone's world orientation is Identity (facing forward, arms down).
-      // Sensor reading in Three.js frame is Q_sensor.
-      // Offset Q_offset = inverse(Q_sensor) such that Q_offset * Q_sensor = Identity.
       const offset = sensorQuat.clone().invert().normalize();
       this.calibOffsets.set(role, offset);
     });
@@ -224,78 +347,47 @@ export class AvatarRig {
     this.isCalibrated = true;
   }
 
-  /**
-   * Re-zero: fixes yaw drift without resetting joint mount offsets.
-   * Extracts chest (or primary active bone) yaw around the Y axis and sets a global yaw correction.
-   */
-  public reZeroYaw(currentSensorQuats: Map<string, THREE.Quaternion>) {
-    // Determine reference bone (chest first, or any active limb)
-    const refRole = currentSensorQuats.has('chest') ? 'chest' : currentSensorQuats.keys().next().value;
-    if (!refRole) return;
+  public reZeroYaw() {
+    let currentChestWorld = this.boneGroups.get('chest')?.quaternion.clone();
+    if (!currentChestWorld) {
+      currentChestWorld = new THREE.Quaternion(0, 0, 0, 1);
+    }
 
-    const rawQuat = currentSensorQuats.get(refRole)!;
-    const offset = this.calibOffsets.get(refRole) || new THREE.Quaternion(0, 0, 0, 1);
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(currentChestWorld);
+    const yaw = Math.atan2(forward.x, forward.z);
 
-    // Current calibrated rotation without yaw fix
-    const curCalib = offset.clone().multiply(rawQuat).normalize();
-
-    // Extract yaw angle (rotation around Three.js Y-up axis)
-    // For quaternion (x, y, z, w): yaw = atan2(2(w*y + x*z), 1 - 2(y*y + z*z))
-    const yaw = Math.atan2(
-      2.0 * (curCalib.w * curCalib.y + curCalib.x * curCalib.z),
-      1.0 - 2.0 * (curCalib.y * curCalib.y + curCalib.z * curCalib.z)
-    );
-
-    // Compute re-zero quaternion: -yaw rotation around Y
     const halfYaw = -yaw * 0.5;
     this.reZeroYawOffset.set(0, Math.sin(halfYaw), 0, Math.cos(halfYaw)).normalize();
   }
 
-  /**
-   * Returns current pose calibration offsets (including reZeroYaw) as serializable map:
-   * role -> [x, y, z, w].
-   */
   public getCalibrationOffsets(): Record<string, [number, number, number, number]> | null {
     if (!this.isCalibrated || this.calibOffsets.size === 0) {
       return null;
     }
     const result: Record<string, [number, number, number, number]> = {};
     this.calibOffsets.forEach((offset, role) => {
-      // Effective offset = reZeroYawOffset * offset
       const eff = this.reZeroYawOffset.clone().multiply(offset).normalize();
       result[role] = [eff.x, eff.y, eff.z, eff.w];
     });
     return result;
   }
 
-  /**
-   * Get calibrated world rotation for a given role:
-   * Q_world = Q_reZero * (Q_offset * Q_sensor)
-   */
   public getCalibratedWorldQuat(role: string, sensorQuat: THREE.Quaternion): THREE.Quaternion {
     const offset = this.calibOffsets.get(role);
     let worldQuat: THREE.Quaternion;
 
     if (offset) {
-      // Offset applied to sensor orientation
       worldQuat = offset.clone().multiply(sensorQuat).normalize();
     } else {
       worldQuat = sensorQuat.clone();
     }
 
-    // Apply global yaw re-zero correction
     return this.reZeroYawOffset.clone().multiply(worldQuat).normalize();
   }
 
-  /**
-   * Update avatar skeleton hierarchy with live quaternions:
-   * Rule: Bone rotation = inverse(parent world rotation) * child world rotation, after offsets.
-   * Grays out bone meshes when device is offline.
-   */
   public updatePoses(
     boneSensors: Map<string, { quat: THREE.Quaternion; isOnline: boolean }>
   ) {
-    // 1. Calculate calibrated world rotations for each bone with an online sensor
     const calibratedWorldQuats = new Map<string, THREE.Quaternion>();
 
     for (const [role, data] of boneSensors) {
@@ -305,8 +397,6 @@ export class AvatarRig {
       }
     }
 
-    // 2. Hierarchically compute local rotations:
-    // Local rotation = inverse(parent world rotation) * child world rotation
     const identityQuat = new THREE.Quaternion(0, 0, 0, 1);
     this.traverseAndUpdateBones(this.skeleton.root, identityQuat, calibratedWorldQuats, boneSensors);
   }
@@ -323,25 +413,21 @@ export class AvatarRig {
     const sensorData = boneSensors.get(boneName);
     const isOnline = sensorData ? sensorData.isOnline : false;
 
-    // Child world rotation: use sensor if available and online, else follow parent
     let childWorldQuat: THREE.Quaternion;
     if (calibratedWorldQuats.has(boneName)) {
       childWorldQuat = calibratedWorldQuats.get(boneName)!;
     } else {
-      // If untracked or offline, keep rest alignment relative to parent
       childWorldQuat = parentWorldQuat.clone();
     }
 
-    // FORMULA: Bone rotation = inverse(parent world rotation) * child world rotation
     const invParent = parentWorldQuat.clone().invert();
     const localBoneQuat = invParent.multiply(childWorldQuat).normalize();
 
     group.quaternion.copy(localBoneQuat);
 
-    // Update material (vibrant when online, grayed out when offline)
+    // Update chassis and tracker module status
     this.updateBoneMaterial(boneName, isOnline);
 
-    // Recurse for all children in the skeleton hierarchy
     const children = this.skeleton.bones.filter((b) => b.parent === boneName);
     for (const child of children) {
       this.traverseAndUpdateBones(child.name, childWorldQuat, calibratedWorldQuats, boneSensors);
@@ -349,16 +435,26 @@ export class AvatarRig {
   }
 
   private updateBoneMaterial(boneName: string, isOnline: boolean) {
+    // 1. Update chassis meshes
     const meshes = this.boneMeshes.get(boneName);
-    if (!meshes) return;
+    if (meshes) {
+      const targetChassisMat = isOnline ? this.onlineChassisMaterial : this.offlineChassisMaterial;
+      for (const mesh of meshes) {
+        // Leave joint collars and visor with their distinct materials
+        if (mesh.material === this.onlineChassisMaterial || mesh.material === this.offlineChassisMaterial) {
+          if (mesh.material !== targetChassisMat) {
+            mesh.material = targetChassisMat;
+          }
+        }
+      }
+    }
 
-    const targetMat = isOnline
-      ? this.onlineMaterials.get(boneName) || this.offlineMaterial
-      : this.offlineMaterial;
-
-    for (const mesh of meshes) {
-      if (mesh.material !== targetMat) {
-        mesh.material = targetMat;
+    // 2. Update tracker module LED status ring (Cyan pulse when streaming, dark when offline)
+    const ledMesh = this.trackerLedMeshes.get(boneName);
+    if (ledMesh) {
+      const targetLedMat = isOnline ? this.activeSensorLedMaterial : this.inactiveSensorLedMaterial;
+      if (ledMesh.material !== targetLedMat) {
+        ledMesh.material = targetLedMat;
       }
     }
   }
@@ -368,7 +464,6 @@ export class AvatarRig {
     this.calibOffsets.clear();
     this.reZeroYawOffset.set(0, 0, 0, 1);
 
-    // Reset all groups to identity local rotation
     for (const group of this.boneGroups.values()) {
       group.quaternion.set(0, 0, 0, 1);
     }

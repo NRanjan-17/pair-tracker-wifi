@@ -116,14 +116,12 @@ class DashboardApp {
   private initDOM() {
     const btnStart = document.getElementById('btnStartSession') as HTMLButtonElement;
     const btnEnd = document.getElementById('btnEndSession') as HTMLButtonElement;
-    const btnResetCam = document.getElementById('btnResetCamera') as HTMLButtonElement;
     const btnCalib = document.getElementById('btnCalibratePose') as HTMLButtonElement;
     const btnReZero = document.getElementById('btnReZero') as HTMLButtonElement;
 
     // Recording action listeners
     btnStart.addEventListener('click', () => this.startSession());
     btnEnd.addEventListener('click', () => this.endSession());
-    btnResetCam.addEventListener('click', () => this.visualizer.resetCamera());
 
     if (btnCalib) {
       btnCalib.addEventListener('click', () => this.calibratePose());
@@ -215,6 +213,28 @@ class DashboardApp {
     if (btnUpdateAll) {
       btnUpdateAll.addEventListener('click', () => this.updateAllDevices());
     }
+
+    // Studio camera angle presets
+    const camButtons = document.querySelectorAll('.btn-cam');
+    camButtons.forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const target = e.currentTarget as HTMLButtonElement;
+        const cam = (target.dataset.cam || 'persp') as 'persp' | 'front' | 'side' | 'top';
+        this.visualizer.setCameraView(cam);
+        camButtons.forEach((b) => b.classList.remove('active'));
+        target.classList.add('active');
+      });
+    });
+
+    const btnResetCam = document.getElementById('btnResetCamera');
+    if (btnResetCam) {
+      btnResetCam.addEventListener('click', () => {
+        this.visualizer.resetCamera();
+        camButtons.forEach((b) => b.classList.remove('active'));
+        const perspBtn = document.querySelector('.btn-cam[data-cam="persp"]');
+        if (perspBtn) perspBtn.classList.add('active');
+      });
+    }
   }
 
   public calibratePose() {
@@ -222,7 +242,7 @@ class DashboardApp {
     const badge = document.getElementById('calibBadge');
     if (badge) {
       badge.className = 'badge-calib badge-calib-done';
-      badge.innerText = '✓ N-Pose Calibrated';
+      badge.innerText = 'Calibrated';
     }
   }
 
@@ -407,7 +427,6 @@ class DashboardApp {
 
       const displayName = role.replace(/_/g, ' ');
       const statusClass = isOnline ? 'status-online' : 'status-missing';
-      const statusText = isOnline ? 'ONLINE' : 'MISSING / OFFLINE';
 
       const batt = isOnline && dev && dev.battery_pct !== null ? `${dev.battery_pct}%` : '—';
       const loss = isOnline && dev ? `${dev.loss_pct.toFixed(2)}%` : '—';
@@ -425,8 +444,10 @@ class DashboardApp {
       const heap = isOnline && dev && dev.free_heap ? `${Math.round(dev.free_heap / 1024)} KB` : '—';
       const hwName = isOnline && dev?.hw ? dev.hw.toUpperCase() : '';
       const hwBadgeHtml = isOnline && hwName
-        ? `<span class="role-tag-badge hw-badge" style="background: ${dev?.hw === 'esp12e' ? '#38bdf8' : '#818cf8'}; color: #0f172a; font-weight: 700; margin-left: 4px;">${hwName}</span>`
+        ? `<span class="role-tag-badge hw-badge" style="background: rgba(56, 189, 248, 0.12); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.25);">${hwName}</span>`
         : '';
+
+      const statusText = isOnline ? 'ONLINE' : 'STANDBY';
 
       card.innerHTML = `
         <div class="card-top">
@@ -456,10 +477,10 @@ class DashboardApp {
           </div>
         </div>
         <div class="firmware-meta-row">
-          <span style="color: var(--text-muted);">FW: <strong>v${fwVer}</strong></span>
+          <span>FW: <strong>v${fwVer}</strong></span>
           <div class="fw-val-group">
-            ${isOutdated ? `<span class="badge-update-avail" title="Update available to v${latestVer}">⬆️ v${latestVer} avail</span>` : (isOnline && fwVer !== 'unknown' ? `<span class="badge-up-to-date">✓ Up to date</span>` : '')}
-            ${isProtoOutdated ? `<span class="badge-proto-outdated" title="Protocol older than required">⚠️ Proto v${dev?.protocol_version || 1} outdated</span>` : ''}
+            ${isOutdated ? `<span class="badge-update-avail" title="Update available to v${latestVer}">v${latestVer} avail</span>` : (isOnline && fwVer !== 'unknown' ? `<span class="badge-up-to-date">Up to date</span>` : '')}
+            ${isProtoOutdated ? `<span class="badge-proto-outdated" title="Protocol older than required">Proto v${dev?.protocol_version || 1} outdated</span>` : ''}
           </div>
         </div>
         ${
@@ -478,7 +499,7 @@ class DashboardApp {
           ${
             isOnline && dev
               ? `<div class="card-actions">
-                  <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'identify')">Blink</button>
+                  <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'identify')">Identify</button>
                   <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'reboot')">Reboot</button>
                   ${
                     hasActiveOta
@@ -486,7 +507,7 @@ class DashboardApp {
                       : `<button class="btn ${isOutdated ? 'btn-primary' : 'btn-secondary'} btn-sm" ${isBatteryLow ? 'disabled title="Battery < 30%"' : ''} onclick="window.dashboardApp.triggerOTA('${dev.device_id}')">Update</button>`
                   }
                 </div>`
-              : `<span style="color: var(--danger); font-size: 0.72rem; font-weight: 600;">Required for session</span>`
+              : `<span style="color: var(--text-tertiary); font-size: 0.7rem; font-weight: 500;">Required for recording</span>`
           }
         </div>
       `;
@@ -527,14 +548,15 @@ class DashboardApp {
             <div class="card-top">
               <div class="role-title">
                 <span>Unassigned Tracker</span>
-                <span class="role-tag-badge" style="background: #fbbf24; color: #0f172a; font-weight: 800;">UNASSIGNED</span>
-                <span class="role-tag-badge hw-badge" style="background: ${dev.hw === 'esp12e' ? '#38bdf8' : '#818cf8'}; color: #0f172a; font-weight: 700; margin-left: 4px;">${hwName}</span>
+                <span class="role-tag-badge" style="background: rgba(245, 158, 11, 0.12); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25);">UNASSIGNED</span>
+                <span class="role-tag-badge hw-badge" style="background: rgba(56, 189, 248, 0.12); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.25);">${hwName}</span>
               </div>
               <span class="status-indicator status-online">ONLINE</span>
             </div>
 
             <div class="imu-notice-box">
-              ⚠️ <strong>No IMU Detected (Identity Quat Stream):</strong> Tracker is currently streaming fallback identity quaternions <code>[1.0, 0.0, 0.0, 0.0]</code>. Attach a BNO085 IMU to I2C pins (SDA=D2/GPIO4, SCL=D1/GPIO5).
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span><strong>Streaming Fallback Identity Quat [1, 0, 0, 0]:</strong> No BNO085 IMU detected on I2C bus (SDA=D2/GPIO4, SCL=D1/GPIO5). Connect IMU sensor to stream live motion.</span>
             </div>
 
             <div class="card-metrics">
@@ -565,10 +587,10 @@ class DashboardApp {
               <button class="btn btn-primary btn-sm" onclick="window.dashboardApp.assignRole('${dev.device_id}')">Assign</button>
             </div>
 
-            <div class="card-footer" style="margin-top: 10px;">
+            <div class="card-footer" style="margin-top: 8px;">
               <span><code>${dev.device_id}</code> (FW: v${fwVer})</span>
               <div class="card-actions">
-                <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'identify')">Blink LED</button>
+                <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'identify')">Identify</button>
                 <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'reboot')">Reboot</button>
               </div>
             </div>

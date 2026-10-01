@@ -13,7 +13,7 @@ export class ThreeVisualizer {
 
   private isMouseDown = false;
   private mousePrev = { x: 0, y: 0 };
-  private spherical = { radius: 3.2, theta: 0, phi: Math.PI / 2.2 };
+  private spherical = { radius: 3.2, theta: 0.45, phi: Math.PI / 2.3 };
   private cameraTarget = new THREE.Vector3(0, 1.05, 0);
 
   // Latency & performance tracking
@@ -31,19 +31,22 @@ export class ThreeVisualizer {
   constructor(container: HTMLElement) {
     this.container = container;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x070b14);
+    this.scene.background = new THREE.Color(0x090d16);
+    this.scene.fog = new THREE.FogExp2(0x090d16, 0.042);
 
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
 
-    this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+    this.camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100);
     this.updateCameraPosition();
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
     container.appendChild(this.renderer.domElement);
 
     this.setupLighting();
@@ -59,45 +62,50 @@ export class ThreeVisualizer {
   }
 
   private setupLighting() {
-    // Ambient light
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+    // 1. Soft balanced ambient fill
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
     this.scene.add(ambientLight);
 
-    // Key Light
-    const keyLight = new THREE.DirectionalLight(0x38bdf8, 1.4);
-    keyLight.position.set(4, 8, 6);
+    // 2. High-precision studio Key Light (Crisp white with soft shadow drop)
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.45);
+    keyLight.position.set(4, 9, 6);
     keyLight.castShadow = true;
-    keyLight.shadow.mapSize.width = 1024;
-    keyLight.shadow.mapSize.height = 1024;
+    keyLight.shadow.mapSize.width = 2048;
+    keyLight.shadow.mapSize.height = 2048;
+    keyLight.shadow.camera.near = 0.5;
+    keyLight.shadow.camera.far = 25;
+    keyLight.shadow.camera.left = -2.5;
+    keyLight.shadow.camera.right = 2.5;
+    keyLight.shadow.camera.top = 2.5;
+    keyLight.shadow.camera.bottom = -2.5;
+    keyLight.shadow.bias = -0.0001;
     this.scene.add(keyLight);
 
-    // Fill Light
-    const fillLight = new THREE.DirectionalLight(0x818cf8, 0.7);
+    // 3. Cool Studio Fill Light (from left to reveal chassis depth)
+    const fillLight = new THREE.DirectionalLight(0xcfd8dc, 0.65);
     fillLight.position.set(-5, 4, 3);
     this.scene.add(fillLight);
 
-    // Rim Light (from behind for sleek silhouette)
-    const rimLight = new THREE.DirectionalLight(0x0ea5e9, 0.9);
+    // 4. Subtle Studio Rim / Contour Backlight (Highlights metallic bevels)
+    const rimLight = new THREE.DirectionalLight(0xe2e8f0, 0.85);
     rimLight.position.set(0, 5, -6);
     this.scene.add(rimLight);
   }
 
   private setupEnvironment() {
-    // Cyberpunk grid floor
-    const grid = new THREE.GridHelper(8, 24, 0x0284c7, 0x1e293b);
+    // 1. Precision Mocap Studio Grid Floor
+    const grid = new THREE.GridHelper(12, 24, 0x334155, 0x182030);
     grid.position.y = 0;
     this.scene.add(grid);
 
-    // Floor shadow receiver disc
-    const floorGeo = new THREE.CircleGeometry(4, 32);
-    const floorMat = new THREE.MeshStandardMaterial({
-      color: 0x090e1a,
-      roughness: 0.9,
-      metalness: 0.1,
+    // 2. Shadow Receiver Studio Floor (Blends seamlessly into background fog)
+    const floorGeo = new THREE.PlaneGeometry(32, 32);
+    const floorMat = new THREE.ShadowMaterial({
+      opacity: 0.4,
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.01;
+    floor.position.y = -0.005;
     floor.receiveShadow = true;
     this.scene.add(floor);
   }
@@ -115,8 +123,8 @@ export class ThreeVisualizer {
       const dy = e.clientY - this.mousePrev.y;
       this.mousePrev = { x: e.clientX, y: e.clientY };
 
-      this.spherical.theta -= dx * 0.007;
-      this.spherical.phi = Math.max(0.1, Math.min(Math.PI / 2.05, this.spherical.phi - dy * 0.007));
+      this.spherical.theta -= dx * 0.006;
+      this.spherical.phi = Math.max(0.08, Math.min(Math.PI / 2.05, this.spherical.phi - dy * 0.006));
       this.updateCameraPosition();
     });
 
@@ -131,6 +139,33 @@ export class ThreeVisualizer {
     });
   }
 
+  public setCameraView(preset: 'persp' | 'front' | 'side' | 'top') {
+    switch (preset) {
+      case 'front':
+        this.spherical.theta = 0;
+        this.spherical.phi = Math.PI / 2.0;
+        this.spherical.radius = 3.0;
+        break;
+      case 'side':
+        this.spherical.theta = Math.PI / 2.0;
+        this.spherical.phi = Math.PI / 2.0;
+        this.spherical.radius = 3.0;
+        break;
+      case 'top':
+        this.spherical.theta = 0;
+        this.spherical.phi = 0.08;
+        this.spherical.radius = 3.6;
+        break;
+      case 'persp':
+      default:
+        this.spherical.theta = 0.45;
+        this.spherical.phi = Math.PI / 2.3;
+        this.spherical.radius = 3.2;
+        break;
+    }
+    this.updateCameraPosition();
+  }
+
   private updateCameraPosition() {
     const sinPhi = Math.sin(this.spherical.phi);
     this.camera.position.x = this.cameraTarget.x + this.spherical.radius * sinPhi * Math.sin(this.spherical.theta);
@@ -140,17 +175,13 @@ export class ThreeVisualizer {
   }
 
   public resetCamera() {
-    this.spherical = { radius: 3.2, theta: 0, phi: Math.PI / 2.2 };
-    this.cameraTarget.set(0, 1.05, 0);
-    this.updateCameraPosition();
+    this.setCameraView('persp');
   }
 
   public handleSample(sample: SampleMessage) {
-    // Coordinate frame conversion once in one function
     const [qw, qx, qy, qz] = sample.quat;
     const threeQuat = bnoToThreeQuat(qw, qx, qy, qz);
 
-    // Push into jitter buffer with server-synced time
     this.jitterBuffer.pushSample(
       sample.role,
       sample.seq,
@@ -161,7 +192,6 @@ export class ThreeVisualizer {
   }
 
   public calibratePose() {
-    // Capture current quaternions for all bones in the jitter buffer
     const currentQuats = new Map<string, THREE.Quaternion>();
     const nowPerf = performance.now();
 
@@ -176,18 +206,7 @@ export class ThreeVisualizer {
   }
 
   public reZeroYaw() {
-    // Capture current quaternions for yaw re-zero
-    const currentQuats = new Map<string, THREE.Quaternion>();
-    const nowPerf = performance.now();
-
-    for (const bone of this.avatar.skeleton.bones) {
-      const data = this.jitterBuffer.getInterpolatedQuaternion(bone.name, nowPerf);
-      if (data && data.isOnline) {
-        currentQuats.set(bone.name, data.quat);
-      }
-    }
-
-    this.avatar.reZeroYaw(currentQuats);
+    this.avatar.reZeroYaw();
   }
 
   public getCalibrationOffsets(): Record<string, [number, number, number, number]> | null {
@@ -195,8 +214,10 @@ export class ThreeVisualizer {
   }
 
   private onResize() {
+    if (!this.container) return;
     const width = this.container.clientWidth || 800;
     const height = this.container.clientHeight || 600;
+
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
@@ -207,60 +228,32 @@ export class ThreeVisualizer {
 
     const nowPerf = performance.now();
 
+    // 1. Live Streaming Mode vs Recorded Playback Mode
     if (this.isPlaybackMode) {
-      // In playback mode, poses are driven directly by PlaybackController
       this.avatar.updatePoses(this.playbackPoses);
     } else {
-      // 1. Gather slerp-interpolated quaternions from jitter buffer for each bone
-      const boneSensors = new Map<string, { quat: THREE.Quaternion; isOnline: boolean }>();
-      let totalLatency = 0;
-      let latencyCount = 0;
-
+      const livePoses = new Map<string, { quat: THREE.Quaternion; isOnline: boolean }>();
       for (const bone of this.avatar.skeleton.bones) {
-        const interp = this.jitterBuffer.getInterpolatedQuaternion(bone.name, nowPerf);
-        if (interp) {
-          boneSensors.set(bone.name, {
-            quat: interp.quat,
-            isOnline: interp.isOnline,
-          });
-
-          if (interp.isOnline) {
-            totalLatency += interp.latencyMs;
-            latencyCount++;
-          }
+        const data = this.jitterBuffer.getInterpolatedQuaternion(bone.name, nowPerf);
+        if (data) {
+          livePoses.set(bone.name, data);
         } else {
-          boneSensors.set(bone.name, {
-            quat: new THREE.Quaternion(0, 0, 0, 1),
-            isOnline: false,
-          });
+          livePoses.set(bone.name, { quat: new THREE.Quaternion(0, 0, 0, 1), isOnline: false });
         }
       }
-
-      // 2. Drive avatar with hierarchical forward kinematics:
-      // Bone rotation = inverse(parent world rotation) * child world rotation, after offsets
-      this.avatar.updatePoses(boneSensors);
-
-      // 3. Update measured latency
-      if (latencyCount > 0) {
-        this.currentLatencyMs = Math.round(totalLatency / latencyCount);
-        if (this.onLatencyUpdate) {
-          this.onLatencyUpdate(this.currentLatencyMs);
-        }
-      }
+      this.avatar.updatePoses(livePoses);
     }
 
-    // 4. Update FPS counter
+    // 2. Measure renderer FPS & latency
     this.frameCount++;
     if (nowPerf - this.lastFpsCheck >= 1000) {
       const fps = Math.round((this.frameCount * 1000) / (nowPerf - this.lastFpsCheck));
       this.frameCount = 0;
       this.lastFpsCheck = nowPerf;
-      if (this.onFpsUpdate) {
-        this.onFpsUpdate(fps);
-      }
+      if (this.onFpsUpdate) this.onFpsUpdate(fps);
     }
 
-    // 5. Render Three.js scene
+    // 3. Render Three.js Scene
     this.renderer.render(this.scene, this.camera);
   }
 }
