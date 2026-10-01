@@ -221,9 +221,13 @@ def get_all_firmware_manifests(hw: Optional[str] = None) -> List[Dict[str, Any]]
         elif hw == "esp32c6":
             search_dirs.append((hw, FIRMWARE_BIN_DIR))
     else:
-        for p in FIRMWARE_BIN_DIR.iterdir():
-            if p.is_dir() and p.name in ("esp32c6", "esp12e"):
-                search_dirs.append((p.name, p))
+        # Default order: esp32c6 (primary target), then esp12e (secondary target)
+        c6_dir = FIRMWARE_BIN_DIR / "esp32c6"
+        if c6_dir.exists():
+            search_dirs.append(("esp32c6", c6_dir))
+        e12_dir = FIRMWARE_BIN_DIR / "esp12e"
+        if e12_dir.exists():
+            search_dirs.append(("esp12e", e12_dir))
         # Legacy root layout
         search_dirs.append(("esp32c6", FIRMWARE_BIN_DIR))
 
@@ -256,28 +260,17 @@ def get_firmware_manifest_by_version(version: str, hw: Optional[str] = None) -> 
     if version == "latest":
         return get_latest_firmware_manifest(hw=hw)
 
-    if hw:
-        m_file = FIRMWARE_BIN_DIR / hw / version / "manifest.json"
-        if m_file.exists():
-            try:
-                with open(m_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if "hw" not in data:
-                        data["hw"] = hw
-                    return data
-            except Exception:
-                pass
+    _sync_manifests_from_disk()
+    target_hw = hw or "esp32c6"
+    for m in get_all_firmware_manifests(hw=target_hw):
+        if m.get("version") == version:
+            return m
 
-    m_file = FIRMWARE_BIN_DIR / version / "manifest.json"
-    if m_file.exists():
-        try:
-            with open(m_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if "hw" not in data:
-                    data["hw"] = hw or "esp32c6"
-                return data
-        except Exception:
-            return None
+    # Fallback to any hw
+    for m in get_all_firmware_manifests(hw=None):
+        if m.get("version") == version:
+            return m
+
     return None
 
 def _authenticate_firmware_request(authorization: Optional[str], token: Optional[str]):
@@ -314,17 +307,16 @@ def _find_firmware_bin(version: str, hw: Optional[str] = None) -> Tuple[Path, st
             hw = latest["hw"]
 
     candidates = []
-    if hw:
-        candidates.append(FIRMWARE_BIN_DIR / hw / resolved_version / "firmware.bin")
+    effective_hw = hw or "esp32c6"
+    candidates.append(FIRMWARE_BIN_DIR / effective_hw / resolved_version / "firmware.bin")
     candidates.append(FIRMWARE_BIN_DIR / resolved_version / "firmware.bin")
     if FIRMWARE_BIN_DIR.exists():
         for sub in sorted(FIRMWARE_BIN_DIR.iterdir()):
-            if sub.is_dir() and sub.name != hw:
+            if sub.is_dir() and sub.name != effective_hw:
                 candidates.append(sub / resolved_version / "firmware.bin")
 
     if version == "latest":
-        if hw:
-            candidates.append(FIRMWARE_BIN_DIR / hw / "firmware.bin")
+        candidates.append(FIRMWARE_BIN_DIR / effective_hw / "firmware.bin")
         candidates.append(FIRMWARE_BIN_DIR / "firmware.bin")
 
     for p in candidates:
