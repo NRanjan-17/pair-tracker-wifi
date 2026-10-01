@@ -69,6 +69,7 @@ export interface InitMessage {
   required_roles: string[];
   devices: DeviceState[];
   latest_firmware?: FirmwareManifest | null;
+  latest_firmware_by_hw?: Record<string, FirmwareManifest | null>;
   ota_jobs?: OTAJob[];
   active_session: SessionInfo | null;
   server_time_ms?: number;

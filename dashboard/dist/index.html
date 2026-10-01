@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Eidon Tracker Studio — Precision IMU Motion Capture</title>
-    <script type="module" crossorigin src="/assets/index-CMXxEaX1.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Bsz-plyy.css">
+    <title>Pair Tracker Studio — Precision IMU Motion Capture</title>
+    <script type="module" crossorigin src="/assets/index-CvyHLJEt.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BYWcBQc0.css">
   </head>
   <body>
     <div id="app">
@@ -20,7 +20,7 @@
                 <polyline points="2 12 12 17 22 12" />
               </svg>
             </span>
-            <span class="brand-name">EIDON TRACKER</span>
+            <span class="brand-name">PAIR TRACKER</span>
             <span class="tag">STUDIO</span>
           </div>
           <div class="brand-sub">Real-Time IMU Mocap Telemetry Hub &bull; <code>pair.local</code></div>
@@ -89,27 +89,33 @@
           <!-- Tab View 1: Live Trackers -->
           <div id="viewTrackers" class="tab-content active">
             <div class="panel-header">
-              <h2>Mocap Tracker Roles</h2>
-              <div class="panel-header-actions">
-                <button id="btnManageDevices" class="btn btn-sm btn-secondary" title="View all paired hardware devices & clean up stale records">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg>
-                  Paired Devices (<span id="pairedDevicesCount">0</span>)
-                </button>
-                <span id="latestFwBadge" class="badge badge-secondary" title="Latest released firmware version">v1.0.0</span>
-                <button id="btnUpdateAll" class="btn btn-sm btn-ghost" title="Sequentially update all outdated online trackers over WiFi">
+              <div>
+                <h2>Mocap Tracker Roles</h2>
+                <p class="panel-desc" style="margin-bottom: 0;">Full-body &amp; arm modules. Core roles required for recording.</p>
+              </div>
+              <div id="roleSummary" class="roles-summary-badge">0 / 7 Core Online</div>
+            </div>
+
+            <!-- Tracker Actions Toolbar -->
+            <div class="tracker-toolbar">
+              <button id="btnManageDevices" class="btn btn-sm btn-secondary" title="View all paired hardware devices & clean up stale records">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg>
+                Paired Devices (<span id="pairedDevicesCount">0</span>)
+              </button>
+              <div class="tracker-toolbar-right">
+                <span id="latestFwBadge" class="badge badge-secondary" title="Latest released firmware version">v1.0.2</span>
+                <button id="btnUpdateAll" class="btn btn-sm btn-primary" title="Sequentially update all outdated online trackers over WiFi">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
                   Update Outdated
                 </button>
-                <div id="roleSummary" class="roles-summary-badge">0 / 7 Core Online</div>
               </div>
             </div>
-            <p class="panel-desc">Full-body and arm tracking modules. Core roles are required to initiate session recording.</p>
 
-            <!-- Role Category Filter Strip -->
+            <!-- Role Category Filter Strip (Segmented Pill Control) -->
             <div class="role-filter-strip">
-              <button class="btn-role-filter active" data-role-filter="all">All Roles (15)</button>
-              <button class="btn-role-filter" data-role-filter="arms">Arms &amp; Upper Body (9)</button>
-              <button class="btn-role-filter" data-role-filter="legs">Legs &amp; Lower Body (6)</button>
+              <button class="btn-role-filter active" data-role-filter="all">All (15)</button>
+              <button class="btn-role-filter" data-role-filter="arms">Arms &amp; Upper (9)</button>
+              <button class="btn-role-filter" data-role-filter="legs">Legs &amp; Lower (6)</button>
               <button class="btn-role-filter" data-role-filter="online">Online Only</button>
             </div>
 

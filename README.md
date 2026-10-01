@@ -1,8 +1,22 @@
-# Pair Tracker WiFi
+# Eidon Tracker WiFi
 
 Autonomous, open-source, WiFi-based full-body motion capture (mocap) tracking system supporting **Seeed Studio XIAO ESP32-C6** (primary target) and **ESP-12E / NodeMCU ESP8266** (secondary target) microcontrollers with **BNO085 9-DOF IMUs**.
 
-The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 ms latency, automatic zero-configuration server discovery via mDNS (`pair.local`), a real-time Three.js 3D avatar dashboard, one-click N-pose calibration, Parquet session recording, Web Serial USB flashing with auto chip detection, fail-safe dual-slot OTA firmware updates, and standard mocap export to BVH, CSV, and Parquet.
+The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 ms latency, automatic zero-configuration server discovery via mDNS (`pair.local`), a modern workstation 3D avatar dashboard, one-click N-pose calibration, Parquet session recording, in-browser Web Serial USB flashing with auto chip detection, fail-safe dual-slot OTA firmware updates with USB battery override, paired device lifecycle management, and standard mocap export to BVH, CSV, and Parquet.
+
+---
+
+## Key Features
+
+- **Multi-Target Hardware**: First-class support for both ESP32-C6 (FreeRTOS dual-task, NVS) and ESP-12E / NodeMCU ESP8266 (160 MHz cooperative loop, LittleFS).
+- **Zero-Config Streaming**: Automatic mDNS discovery (`pair.local`), 48 Hz binary packet batches over WebSockets, clock synchronization, and disconnect ring-buffer backfill.
+- **Professional Workstation Dashboard**: Dark-mode Linear-aesthetic UI featuring segmented pill filters (All, Core, Arms, Legs, Online), real-time loss and heap telemetry, and live streaming console drawer.
+- **Real-Time 3D Biomechanical Visualizer**: Three.js kinematic avatar with 75 ms jitter buffer and SLERP interpolation, bone-aligned tracker indicators, N-pose calibration, and yaw drift re-zeroing.
+- **Web Serial USB Flashing**: In-browser firmware flashing via Web Serial (`esptool-js`) with automatic chip detection (ESP8266, ESP32-C6, ESP32-S3), custom WiFi credential provisioning, and role assignment.
+- **Over-The-Air (OTA) Updates**: Hardware-aware binary distribution with automatic manifest synthesis, progress telemetry, dual-slot rollback protection, and **USB low-battery override** for benchtop testing.
+- **Clean ESP8266 Hardware Reboot**: Boot strapping pin release (`GPIO0`, `GPIO2`, `GPIO15`) and clean connection teardown prior to hardware reset to prevent ESP-12E bootloader hangs.
+- **Paired Devices Management**: Dedicated modal to inspect all registered trackers, unpair individual devices, or perform one-click cleanup of offline/stale devices from the SQLite database.
+- **High-Throughput Recording & Export**: Zero-copy PyArrow Parquet recording, session playback with scrubbing and variable speeds, and export to BVH (ZXY Euler), calibrated CSV, resampled Parquet, and session metadata JSON.
 
 ---
 
@@ -26,6 +40,7 @@ The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 m
  |  - High-performance WebSocket binary ingest & sample unbatching               |
  |  - Sequence gap detection & per-device packet loss tracking                   |
  |  - Multi-target OTA binary distribution & job state machine (esp32c6, esp12e) |
+ |  - SQLite device registry & metadata store                                    |
  +-------------------+---------------------------------------+-------------------+
                      |                                       |
                      | WebSocket fan-out                     | Parquet writer
@@ -36,9 +51,9 @@ The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 m
  |  - 75 ms Jitter Buffer + SLERP    |   |  - Sessions SQLite metadata DB        |
  |  - N-pose calibration & Re-zero   |   |  - Gap accounting & device telemetry  |
  |  - Web Serial flasher & provision |   +-------------------+-------------------+
- |  - OTA firmware update triggers   |                       |
- +-----------------------------------+                       | GET /v1/sessions/{id}/export
-                                                             v
+ |  - Paired Devices registry modal  |                       |
+ |  - OTA triggers & USB override    |                       | GET /v1/sessions/{id}/export
+ +-----------------------------------+                       v
                                          +---------------------------------------+
                                          |              MOCAP EXPORT             |
                                          |  - BVH (ZXY Euler, skeleton offsets)  |
@@ -50,21 +65,17 @@ The system provides end-to-end IMU orientation streaming at 48 Hz with sub-100 m
 
 ---
 
-## Project Status
+## Hardware Target Matrix
 
-| Feature | Status | Notes |
-|:---|:---:|:---|
-| **Primary Target (ESP32-C6)** | **Working** | Full FreeRTOS dual-task, NVS config, 115200 baud Serial CLI, 4-partition OTA |
-| **Secondary Target (ESP-12E)** | **Supported** | 160 MHz single-loop, LittleFS config, 9600 baud Serial CLI, single-bin OTA (`TODO: verify physical sensor stream`) |
-| **WiFi Streaming** | **Working** | 48 Hz binary packet batches, disconnect ring buffer backfill, clock sync |
-| **Dashboard Live Avatar** | **Working** | Three.js visualizer, 75 ms jitter buffer, SLERP interpolation, hardware badge & heap display |
-| **N-Pose Calibration** | **Working** | Sensor-to-bone offset alignment, yaw drift Re-zero button |
-| **Session Recording** | **Working** | Guarded by required roles check, columnar Parquet streaming storage |
-| **Session Playback** | **Working** | Scrubber, play/pause, variable playback speeds (0.5x, 1x, 2x, 4x) |
-| **Mocap Export** | **Working** | BVH (Biovision Hierarchy), raw calibrated CSV, resampled Parquet, metadata JSON |
-| **USB Flashing & Provisioning** | **Working** | Web Serial via `esptool-js` with automatic chip detection (ESP32-C6 vs ESP8266) |
-| **OTA Firmware Updates** | **Working** | Hardware-aware release distribution under `server/firmware_bin/<hw>/<version>/` |
-| **IMU Bus Options** | **Working** | Build flag `-DIMU_BUS=1` (I2C) or `-DIMU_BUS=2` (SPI, `TODO: verify on physical hardware`) |
+| Feature | ESP32-C6 (Primary) | ESP-12E / NodeMCU ESP8266 (Secondary) |
+|:---|:---|:---|
+| **CPU Architecture** | 32-bit RISC-V @ 160 MHz | 32-bit Xtensa LX106 @ 160 MHz |
+| **Concurrency Model** | FreeRTOS Dual-Task (Sensor + Comms) | Non-blocking cooperative polling loop |
+| **Configuration Storage** | Non-Volatile Storage (NVS) | LittleFS Flash File System |
+| **Serial CLI Baud** | 115,200 baud | 9,600 baud (ESP-12E crystal compatibility) |
+| **OTA Mechanism** | Dual 1984 KB partitions (`app0`/`app1`) | Single flash binary replace + clean strapping reboot |
+| **I2C Pinout** | SDA: GPIO21, SCL: GPIO22 | SDA: GPIO4 (D2), SCL: GPIO5 (D1) |
+| **Reboot Strapping Pins** | Internal ROM reset | Pin release (`GPIO0`/`GPIO2` pull-up, `GPIO15` pull-down) |
 
 ---
 
@@ -95,16 +106,34 @@ In a second terminal window, run:
 ```bash
 make run-fake
 ```
-Look at the dashboard: all 7 required body tracker cards will switch to **ONLINE** (green), and the 3D avatar on screen will begin oscillating smoothly driven by live quaternions.
+All 7 required body tracker cards will switch to **ONLINE** (green), and the 3D avatar on screen will begin oscillating smoothly driven by live simulated quaternions.
+
+---
+
+## Building Firmware
+
+Build embedded binaries for either hardware platform using PlatformIO:
+
+```bash
+# Build firmware for Seeed Studio XIAO ESP32-C6
+pio run -d firmware -e esp32c6
+
+# Build firmware for ESP-12E / NodeMCU ESP8266
+pio run -d firmware -e esp12e
+
+# Package a versioned release manifest for OTA distribution
+python3 tools/release_firmware.py 1.0.2
+```
 
 ---
 
 ## Repository Layout
 
 ```
-pair-tracker-wifi/
+eidon-tracker-wifi/
 ├── Makefile                 # Top-level workflow targets (setup, doctor, test, run-*, pio-build)
 ├── README.md                # Project overview and quick start guide
+├── LICENSE                  # MIT License
 ├── requirements.txt         # Python server and toolchain dependencies
 ├── pyproject.toml           # Pytest test configuration
 ├── roles.yaml               # Body tracking roles and required session role constraints
@@ -115,7 +144,7 @@ pair-tracker-wifi/
 │       ├── main.cpp         # Unified entry point (FreeRTOS for C6, cooperative loop for ESP-12E)
 │       ├── boards/          # Pin assignments & hardware specs (esp32c6.h, esp12e.h, board.h)
 │       ├── core/            # Protocol, RingBuffer, Config, ClockSync, CommandParser, SerialCLI
-│       └── hal/             # Hardware Abstraction Layer (IMUBus I2C/SPI, LED, Battery, Storage, OTA, Scheduler)
+│       └── hal/             # Hardware Abstraction Layer (IMUBus I2C/SPI, LED, Battery, Storage, OTA)
 ├── server/                  # FastAPI backend server
 │   ├── main.py              # REST API & WebSocket endpoints (/stream, /sessions, /firmware, /ota)
 │   ├── tracker_manager.py   # Connection state, clock sync, packet loss accounting, OTA jobs
@@ -132,6 +161,7 @@ pair-tracker-wifi/
 │   ├── dist/                # Pre-built production frontend assets served by FastAPI
 │   └── src/
 │       ├── main.ts          # Main dashboard coordinator and WebSocket event dispatcher
+│       ├── style.css        # Linear-inspired dark-mode workstation stylesheet
 │       ├── three_view.ts    # Three.js 3D scene, lighting, camera controls, coordinate mapper
 │       ├── avatar.ts        # Biomechanical avatar hierarchy, bone math, pose calibration
 │       ├── skeleton.json    # Data-driven skeleton topology, bone lengths, and initial offsets
@@ -183,4 +213,4 @@ pair-tracker-wifi/
 
 ## License
 
-Eidon Tracker WiFi is open-source software licensed under the MIT License. See `LICENSE` for details.
+Eidon Tracker WiFi is open-source software licensed under the MIT License. See [LICENSE](LICENSE) for details.

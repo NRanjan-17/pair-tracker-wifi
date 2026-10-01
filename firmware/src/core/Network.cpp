@@ -31,6 +31,8 @@ TrackerNetwork::TrackerNetwork()
       wsConnected(false),
       recording(false),
       otaInProgress(false),
+      rebootPending(false),
+      rebootScheduledMs(0),
       reconnectBackoffMs(1000),
       lastReconnectAttemptMs(0),
       lastHeartbeatMs(0) {}
@@ -290,9 +292,9 @@ void TrackerNetwork::handleTextMessage(const char* jsonStr, size_t length) {
             break;
 
         case CommandType::OTA:
-            Serial.printf("Command: OTA update to %s (size: %u, sha256: %s)\n",
-                          cmd.otaVersion.c_str(), cmd.otaSize, cmd.otaSha256.c_str());
-            performOTA(cmd.otaUrl, cmd.otaSha256, cmd.otaSize, cmd.otaVersion);
+            Serial.printf("Command: OTA update to %s (size: %u, sha256: %s, force: %d)\n",
+                          cmd.otaVersion.c_str(), cmd.otaSize, cmd.otaSha256.c_str(), cmd.otaForce);
+            performOTA(cmd.otaUrl, cmd.otaSha256, cmd.otaSize, cmd.otaVersion, cmd.otaForce);
             break;
 
         case CommandType::SET_ROLE:
@@ -302,14 +304,18 @@ void TrackerNetwork::handleTextMessage(const char* jsonStr, size_t length) {
             break;
 
         case CommandType::REBOOT:
-            Serial.println("Command: REBOOT - restarting MCU now");
-            delay(100);
-            ESP.restart();
+            scheduleReboot(150);
             break;
 
         default:
             break;
     }
+}
+
+void TrackerNetwork::scheduleReboot(uint32_t delayMs) {
+    Serial.printf("Command: REBOOT requested - scheduling clean restart in %u ms\n", delayMs);
+    rebootPending = true;
+    rebootScheduledMs = millis() + delayMs;
 }
 
 void TrackerNetwork::sendFrame(const Batch2QuatFrame& frame) {
@@ -339,19 +345,21 @@ void TrackerNetwork::sendHeartbeat() {
 #else
     doc["flash_size"] = ESP.getFlashChipRealSize();
 #endif
+    doc["firmware_version"] = FIRMWARE_VERSION;
+    doc["protocol_version"] = PROTOCOL_VERSION;
 
     String out;
     serializeJson(doc, out);
     wsClient.sendTXT(out);
 }
 
-void TrackerNetwork::performOTA(const String& urlPath, const String& expectedSha256, size_t expectedSize, const String& version) {
+void TrackerNetwork::performOTA(const String& urlPath, const String& expectedSha256, size_t expectedSize, const String& version, bool force) {
     uint8_t battPct = 0;
     uint16_t battMv = 0;
     halBattery.read(battPct, battMv);
 
-    if (battPct < 30) {
-        Serial.printf("OTA: Aborting - battery too low (%u%% < 30%%)\n", battPct);
+    if (!force && battPct < 30) {
+        Serial.printf("OTA: Aborting - battery too low (%u%% < 30%%). Override with force=true\n", battPct);
         JsonDocument failDoc;
         failDoc["type"] = "ota_progress";
         failDoc["status"] = "failed";
@@ -395,6 +403,32 @@ void TrackerNetwork::performOTA(const String& urlPath, const String& expectedSha
 void TrackerNetwork::process() {
     wsClient.loop();
     yield();
+
+    // Handle deferred clean reboot
+    if (rebootPending && millis() >= rebootScheduledMs) {
+        rebootPending = false;
+        Serial.println("Reboot: Executing clean system restart...");
+        Serial.flush();
+        wsClient.disconnect();
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        delay(150);
+
+#if defined(ESP8266)
+        // Ensure boot strapping pins are configured for SPI Flash Boot (mode 3):
+        // GPIO0: HIGH (Flash boot)
+        // GPIO2: HIGH (Flash boot; release onboard LED on GPIO2 which is active LOW)
+        // GPIO15: LOW (Flash boot)
+        pinMode(0, INPUT_PULLUP);
+        pinMode(2, INPUT_PULLUP);
+        digitalWrite(2, HIGH);
+        pinMode(15, INPUT_PULLDOWN);
+        delay(50);
+        ESP.reset(); // Hardware reset (watchdog trigger)
+#elif defined(ESP32)
+        esp_restart();
+#endif
+    }
 
     // Periodic heartbeat every 5 seconds
     uint32_t now = millis();

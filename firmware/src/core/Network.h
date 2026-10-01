@@ -26,7 +26,8 @@ public:
     void sendHeartbeat();
 
     void triggerIdentify(uint32_t durationMs = 3000);
-    void performOTA(const String& urlPath, const String& expectedSha256, size_t expectedSize, const String& version);
+    void performOTA(const String& urlPath, const String& expectedSha256, size_t expectedSize, const String& version, bool force = false);
+    void scheduleReboot(uint32_t delayMs = 150);
 
 private:
     void handleWSEvent(WStype_t type, uint8_t* payload, size_t length);
@@ -41,6 +42,8 @@ private:
     bool wsConnected;
     bool recording;
     bool otaInProgress;
+    bool rebootPending;
+    uint32_t rebootScheduledMs;
 
     uint32_t reconnectBackoffMs;
     uint32_t lastReconnectAttemptMs;

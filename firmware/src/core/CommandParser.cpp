@@ -36,6 +36,7 @@ bool CommandParser::parse(const char* jsonStr, size_t length, ParsedCommand& cmd
         cmd.otaSha256 = doc["sha256"].as<String>();
         cmd.otaSize = doc["size"] | 0;
         cmd.otaVersion = doc["version"].as<String>();
+        cmd.otaForce = doc["force"] | false;
         return true;
     } else if (strcmp(typeStr, "set_role") == 0) {
         cmd.type = CommandType::SET_ROLE;

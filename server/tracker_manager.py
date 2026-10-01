@@ -235,6 +235,13 @@ class TrackerManager:
                 conn.flash_size = dev_row["flash_size"]
             if dev_row.get("free_heap"):
                 conn.free_heap = dev_row["free_heap"]
+            if dev_row.get("firmware_version") and dev_row["firmware_version"] != "unknown":
+                conn.firmware_version = dev_row["firmware_version"]
+            if dev_row.get("protocol_version"):
+                conn.protocol_version = dev_row["protocol_version"]
+                conn.protocol_outdated = (conn.protocol_version < REQUIRED_PROTOCOL_VERSION)
+            if dev_row.get("battery_pct") is not None:
+                conn.battery_pct = dev_row["battery_pct"]
 
         if device_id in self.cached_announced_telemetry:
             cached = self.cached_announced_telemetry[device_id]
@@ -244,9 +251,10 @@ class TrackerManager:
                 conn.flash_size = cached["flash_size"]
             if cached.get("free_heap") is not None:
                 conn.free_heap = cached["free_heap"]
-            conn.battery_pct = cached.get("battery_pct")
+            if cached.get("battery_pct") is not None:
+                conn.battery_pct = cached.get("battery_pct")
             conn.battery_mv = cached.get("battery_mv")
-            if cached.get("firmware_version"):
+            if cached.get("firmware_version") and cached["firmware_version"] != "unknown":
                 conn.firmware_version = cached["firmware_version"]
             if cached.get("protocol_version") is not None:
                 conn.protocol_version = cached["protocol_version"]
@@ -394,20 +402,24 @@ class TrackerManager:
             else:
                 role_name = reg["role"]
                 cached = self.cached_announced_telemetry.get(dev_id, {})
-                cached_fw = cached.get("firmware_version", "unknown")
-                cached_proto = cached.get("protocol_version", 1)
+                cached_fw = reg.get("firmware_version") or cached.get("firmware_version") or "unknown"
+                if cached_fw == "unknown" and cached.get("firmware_version"):
+                    cached_fw = cached["firmware_version"]
+                cached_proto = reg.get("protocol_version") or cached.get("protocol_version") or 1
+                cached_batt = reg.get("battery_pct") if reg.get("battery_pct") is not None else cached.get("battery_pct")
+                cached_hw = reg.get("hw") or cached.get("hw") or "esp32c6"
                 result.append({
                     "device_id": dev_id,
                     "role": role_name,
                     "role_id": roles_registry.get_role_id(role_name) or 0,
                     "online": False,
-                    "hw": reg.get("hw") or cached.get("hw") or "esp32c6",
+                    "hw": cached_hw,
                     "flash_size": reg.get("flash_size") or cached.get("flash_size") or 0,
                     "free_heap": reg.get("free_heap") or cached.get("free_heap") or 0,
                     "firmware_version": cached_fw,
                     "protocol_version": cached_proto,
                     "protocol_outdated": (cached_proto < REQUIRED_PROTOCOL_VERSION),
-                    "battery_pct": cached.get("battery_pct"),
+                    "battery_pct": cached_batt,
                     "battery_mv": cached.get("battery_mv"),
                     "rssi": None,
                     "uptime_s": None,
@@ -526,12 +538,20 @@ class TrackerManager:
             conn.flash_size = data["flash_size"]
         if "free_heap" in data:
             conn.free_heap = data["free_heap"]
+        if "firmware_version" in data and data["firmware_version"]:
+            conn.firmware_version = data["firmware_version"]
+        if "protocol_version" in data and data["protocol_version"]:
+            conn.protocol_version = data["protocol_version"]
+            conn.protocol_outdated = (conn.protocol_version < REQUIRED_PROTOCOL_VERSION)
 
         db.update_device_metrics(
             device_id=device_id,
             hw=conn.hw,
             flash_size=conn.flash_size,
             free_heap=conn.free_heap,
+            firmware_version=conn.firmware_version,
+            protocol_version=conn.protocol_version,
+            battery_pct=conn.battery_pct,
         )
 
         device_dict = conn.to_dict()

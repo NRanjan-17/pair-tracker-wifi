@@ -48,11 +48,14 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
-            # Ensure hw, flash_size, free_heap exist on devices table
+            # Ensure hw, flash_size, free_heap, firmware_version, protocol_version, battery_pct exist on devices table
             for col, col_def in [
                 ("hw", "TEXT DEFAULT 'esp32c6'"),
                 ("flash_size", "INTEGER DEFAULT 0"),
                 ("free_heap", "INTEGER DEFAULT 0"),
+                ("firmware_version", "TEXT DEFAULT 'unknown'"),
+                ("protocol_version", "INTEGER DEFAULT 1"),
+                ("battery_pct", "INTEGER DEFAULT NULL"),
             ]:
                 try:
                     cursor.execute(f"ALTER TABLE devices ADD COLUMN {col} {col_def}")
@@ -79,6 +82,9 @@ class Database:
         hw: str = "esp32c6",
         flash_size: int = 0,
         free_heap: int = 0,
+        firmware_version: str = "unknown",
+        protocol_version: int = 1,
+        battery_pct: Optional[int] = None,
     ) -> Dict[str, Any]:
         now = int(time.time() * 1000)
         mac_pair = self._normalize_mac(device_id)
@@ -90,16 +96,19 @@ class Database:
                 cursor.execute("DELETE FROM devices WHERE device_id = ?", (alt,))
 
             cursor.execute("""
-            INSERT INTO devices (device_id, role, token, notes, created_at, last_seen, hw, flash_size, free_heap)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO devices (device_id, role, token, notes, created_at, last_seen, hw, flash_size, free_heap, firmware_version, protocol_version, battery_pct)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(device_id) DO UPDATE SET
                 role = excluded.role,
                 token = excluded.token,
                 notes = excluded.notes,
                 hw = excluded.hw,
                 flash_size = excluded.flash_size,
-                free_heap = excluded.free_heap
-            """, (device_id, role, token, notes, now, now, hw, flash_size, free_heap))
+                free_heap = excluded.free_heap,
+                firmware_version = CASE WHEN excluded.firmware_version != 'unknown' THEN excluded.firmware_version ELSE devices.firmware_version END,
+                protocol_version = excluded.protocol_version,
+                battery_pct = COALESCE(excluded.battery_pct, devices.battery_pct)
+            """, (device_id, role, token, notes, now, now, hw, flash_size, free_heap, firmware_version, protocol_version, battery_pct))
             conn.commit()
         return self.get_device(device_id)
 
@@ -116,6 +125,9 @@ class Database:
         hw: Optional[str] = None,
         flash_size: Optional[int] = None,
         free_heap: Optional[int] = None,
+        firmware_version: Optional[str] = None,
+        protocol_version: Optional[int] = None,
+        battery_pct: Optional[int] = None,
     ):
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -130,6 +142,15 @@ class Database:
             if free_heap is not None:
                 updates.append("free_heap = ?")
                 params.append(free_heap)
+            if firmware_version is not None and firmware_version != "unknown":
+                updates.append("firmware_version = ?")
+                params.append(firmware_version)
+            if protocol_version is not None:
+                updates.append("protocol_version = ?")
+                params.append(protocol_version)
+            if battery_pct is not None:
+                updates.append("battery_pct = ?")
+                params.append(battery_pct)
             if updates:
                 params.append(device_id)
                 cursor.execute(f"UPDATE devices SET {', '.join(updates)} WHERE device_id = ?", params)

@@ -143,9 +143,74 @@ async def get_dashboard_asset(asset_path: str):
         return FileResponse(asset_file)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
 
+def _sync_manifests_from_disk():
+    # If firmware/src/core/Version.h exists, read current version
+    version_from_h = None
+    min_protocol = 1
+    version_h = Path(__file__).parent.parent / "firmware" / "src" / "core" / "Version.h"
+    if version_h.exists():
+        try:
+            content = version_h.read_text(encoding="utf-8")
+            m = re.search(r'#define\s+FIRMWARE_VERSION\s+"([^"]+)"', content)
+            if m:
+                version_from_h = m.group(1)
+            mp = re.search(r'#define\s+MIN_PROTOCOL_VERSION\s+(\d+)', content)
+            if mp:
+                min_protocol = int(mp.group(1))
+        except Exception:
+            pass
+
+    for hw in ("esp32c6", "esp12e"):
+        hw_dir = FIRMWARE_BIN_DIR / hw
+        if not hw_dir.exists():
+            continue
+
+        # 1. If hw_dir has a version directory without manifest.json, synthesize it
+        for sub in hw_dir.iterdir():
+            if sub.is_dir() and re.match(r"^\d+(\.\d+)*", sub.name):
+                bin_f = sub / "firmware.bin"
+                man_f = sub / "manifest.json"
+                if bin_f.exists() and not man_f.exists():
+                    try:
+                        data = bin_f.read_bytes()
+                        m_obj = {
+                            "version": sub.name,
+                            "hw": hw,
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "size": len(data),
+                            "min_protocol": min_protocol,
+                        }
+                        man_f.write_text(json.dumps(m_obj, indent=2), encoding="utf-8")
+                    except Exception:
+                        pass
+
+        # 2. If flat firmware.bin exists in hw_dir, and version_from_h is known,
+        # ensure hw_dir / version_from_h / firmware.bin exists
+        flat_bin = hw_dir / "firmware.bin"
+        if flat_bin.exists() and version_from_h:
+            v_dir = hw_dir / version_from_h
+            v_bin = v_dir / "firmware.bin"
+            v_man = v_dir / "manifest.json"
+            if not v_dir.exists() or not v_bin.exists():
+                try:
+                    v_dir.mkdir(parents=True, exist_ok=True)
+                    data = flat_bin.read_bytes()
+                    v_bin.write_bytes(data)
+                    m_obj = {
+                        "version": version_from_h,
+                        "hw": hw,
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                        "size": len(data),
+                        "min_protocol": min_protocol,
+                    }
+                    v_man.write_text(json.dumps(m_obj, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+
 def get_all_firmware_manifests(hw: Optional[str] = None) -> List[Dict[str, Any]]:
     if not FIRMWARE_BIN_DIR.exists():
         return []
+    _sync_manifests_from_disk()
     manifests = []
 
     search_dirs: List[Tuple[str, Path]] = []
@@ -390,6 +455,7 @@ async def trigger_device_ota(
     device_id: str,
     request: Request,
     version: Optional[str] = Query(None),
+    force: bool = Query(False),
     authorization: Optional[str] = Header(None),
 ):
     # Reject with 409 if a session is recording
@@ -408,30 +474,36 @@ async def trigger_device_ota(
 
     conn = tracker_manager.active_connections[device_id]
 
-    # Reject with 409 if last battery is below 30%
-    if conn.battery_pct is not None and conn.battery_pct < 30:
+    # Extract target version and force flag from query, JSON body, or default to "latest"
+    target_version = version
+    body_force = False
+    try:
+        body_bytes = await request.body()
+        if body_bytes:
+            body_str = body_bytes.decode("utf-8").strip()
+            try:
+                parsed = json.loads(body_str)
+                if isinstance(parsed, dict):
+                    if not target_version:
+                        target_version = parsed.get("version", "latest")
+                    body_force = parsed.get("force", False)
+                elif isinstance(parsed, str):
+                    if not target_version:
+                        target_version = parsed
+            except Exception:
+                if not target_version:
+                    target_version = body_str.strip('"')
+    except Exception:
+        pass
+
+    is_forced = bool(force or body_force)
+
+    # Reject with 409 if last battery is below 30% unless force override requested
+    if not is_forced and conn.battery_pct is not None and conn.battery_pct < 30:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Device battery is too low for OTA ({conn.battery_pct}% < 30%)",
+            detail=f"Device battery is too low for OTA ({conn.battery_pct}% < 30%). Use force override to flash anyway.",
         )
-
-    # Extract target version from query, JSON body, or default to "latest"
-    target_version = version
-    if not target_version:
-        try:
-            body_bytes = await request.body()
-            if body_bytes:
-                body_str = body_bytes.decode("utf-8").strip()
-                try:
-                    parsed = json.loads(body_str)
-                    if isinstance(parsed, dict):
-                        target_version = parsed.get("version", "latest")
-                    elif isinstance(parsed, str):
-                        target_version = parsed
-                except Exception:
-                    target_version = body_str.strip('"')
-        except Exception:
-            pass
 
     if not target_version:
         target_version = "latest"
@@ -458,6 +530,7 @@ async def trigger_device_ota(
         "sha256": manifest["sha256"],
         "size": manifest["size"],
         "min_protocol": manifest.get("min_protocol", 1),
+        "force": is_forced,
     }
 
     try:
@@ -972,11 +1045,16 @@ async def dashboard_stream_endpoint(websocket: WebSocket):
     try:
         active_sess = db.get_session(tracker_manager.active_session_id) if tracker_manager.active_session_id else None
         latest_fw = get_latest_firmware_manifest()
+        latest_fw_by_hw = {
+            "esp32c6": get_latest_firmware_manifest("esp32c6"),
+            "esp12e": get_latest_firmware_manifest("esp12e"),
+        }
         await websocket.send_json({
             "type": "init",
             "required_roles": roles_registry.required_roles,
             "devices": tracker_manager.get_device_summary(),
             "latest_firmware": latest_fw,
+            "latest_firmware_by_hw": latest_fw_by_hw,
             "ota_jobs": tracker_manager.get_all_ota_jobs(),
             "active_session": active_sess,
             "server_time_ms": int(time.time() * 1000),

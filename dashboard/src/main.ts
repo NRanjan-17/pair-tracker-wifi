@@ -59,6 +59,7 @@ class DashboardApp {
 
   // OTA firmware management
   public latestFirmware: FirmwareManifest | null = null;
+  public latestFirmwareByHw: Record<string, FirmwareManifest | null> = {};
   private otaJobs: Map<string, OTAJob> = new Map();
   private deviceToOtaJob: Map<string, OTAJob> = new Map();
   private isUpdatingAll = false;
@@ -377,8 +378,11 @@ class DashboardApp {
 
         if (init.latest_firmware) {
           this.latestFirmware = init.latest_firmware;
-          this.updateLatestFwBadge();
         }
+        if (init.latest_firmware_by_hw) {
+          this.latestFirmwareByHw = init.latest_firmware_by_hw;
+        }
+        this.updateLatestFwBadge();
 
         if (init.ota_jobs) {
           for (const job of init.ota_jobs) {
@@ -588,9 +592,11 @@ class DashboardApp {
       const lastSeen = isOnline && dev ? this.formatTimeAgo(dev.last_seen_ms) : 'Never';
       const mac = isOnline && dev ? dev.device_id : 'Not connected';
 
-      const fwVer = dev && dev.firmware_version ? dev.firmware_version : 'unknown';
-      const latestVer = this.latestFirmware ? this.latestFirmware.version : '1.0.0';
-      const isOutdated = isOnline && fwVer !== 'unknown' && fwVer !== latestVer;
+      const rawFwVer = dev && dev.firmware_version ? dev.firmware_version : null;
+      const devHw = dev?.hw || 'esp12e';
+      const targetLatestVer = (this.latestFirmwareByHw && this.latestFirmwareByHw[devHw]) || (this.latestFirmware ? this.latestFirmware.version : '1.0.2');
+      const fwDisplay = rawFwVer ? (isOnline ? `v${rawFwVer}` : `v${rawFwVer} (offline)`) : '—';
+      const isOutdated = isOnline && rawFwVer !== null && rawFwVer !== 'unknown' && rawFwVer !== targetLatestVer;
       const isProtoOutdated = dev && dev.protocol_outdated;
       const job = dev ? this.deviceToOtaJob.get(dev.device_id) : null;
       const hasActiveOta = job && ['queued', 'downloading', 'verifying', 'rebooting'].includes(job.status);
@@ -636,9 +642,9 @@ class DashboardApp {
           </div>
         </div>
         <div class="firmware-meta-row">
-          <span>FW: <strong>v${fwVer}</strong></span>
+          <span>FW: <strong>${fwDisplay}</strong></span>
           <div class="fw-val-group">
-            ${isOutdated ? `<span class="badge-update-avail" title="Update available to v${latestVer}">v${latestVer} avail</span>` : (isOnline && fwVer !== 'unknown' ? `<span class="badge-up-to-date">Up to date</span>` : '')}
+            ${isOutdated ? `<span class="badge-update-avail" title="Update available to v${targetLatestVer}">v${targetLatestVer} avail</span>` : (isOnline && rawFwVer && rawFwVer !== 'unknown' ? `<span class="badge-up-to-date">Up to date</span>` : '')}
             ${isProtoOutdated ? `<span class="badge-proto-outdated" title="Protocol older than required">Proto v${dev?.protocol_version || 1} outdated</span>` : ''}
           </div>
         </div>
@@ -663,7 +669,9 @@ class DashboardApp {
                   ${
                     hasActiveOta
                       ? `<button class="btn btn-secondary btn-sm" disabled>Updating...</button>`
-                      : `<button class="btn ${isOutdated ? 'btn-primary' : 'btn-secondary'} btn-sm" ${isBatteryLow ? 'disabled title="Battery < 30%"' : ''} onclick="window.dashboardApp.triggerOTA('${dev.device_id}')">Update</button>`
+                      : isBatteryLow
+                        ? `<button class="btn btn-sm btn-ota-usb" title="Battery < 30% (${dev.battery_pct}%). Click to update with USB power override." onclick="window.dashboardApp.triggerOTA('${dev.device_id}', 'latest', true)">⚡ Update (USB)</button>`
+                        : `<button class="btn ${isOutdated ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="window.dashboardApp.triggerOTA('${dev.device_id}')">Update</button>`
                   }
                 </div>`
               : `<span style="color: var(--text-tertiary); font-size: 0.7rem; font-weight: 500;">${isCore ? 'Required for recording' : 'Upper body / Arm role'}</span>`
@@ -701,7 +709,14 @@ class DashboardApp {
           const loss = `${dev.loss_pct.toFixed(2)}%`;
           const lastSeen = this.formatTimeAgo(dev.last_seen_ms);
           const heap = dev.free_heap ? `${Math.round(dev.free_heap / 1024)} KB` : '—';
-          const fwVer = dev.firmware_version || 'unknown';
+          const rawFwVer = dev.firmware_version || null;
+          const fwDisplay = rawFwVer ? `v${rawFwVer}` : '—';
+          const devHw = dev.hw || 'esp12e';
+          const targetLatestVer = (this.latestFirmwareByHw && this.latestFirmwareByHw[devHw]) || (this.latestFirmware ? this.latestFirmware.version : '1.0.2');
+          const isOutdated = rawFwVer !== null && rawFwVer !== 'unknown' && rawFwVer !== targetLatestVer;
+          const job = this.deviceToOtaJob.get(dev.device_id);
+          const hasActiveOta = job && ['queued', 'downloading', 'verifying', 'rebooting'].includes(job.status);
+          const isBatteryLow = dev.battery_pct !== null && dev.battery_pct < 30;
 
           card.innerHTML = `
             <div class="card-top">
@@ -737,6 +752,25 @@ class DashboardApp {
               </div>
             </div>
 
+            <div class="firmware-meta-row" style="margin-top: 6px;">
+              <span>FW: <strong>${fwDisplay}</strong></span>
+              <div class="fw-val-group">
+                ${isOutdated ? `<span class="badge-update-avail" title="Update available to v${targetLatestVer}">v${targetLatestVer} avail</span>` : (rawFwVer && rawFwVer !== 'unknown' ? `<span class="badge-up-to-date">Up to date</span>` : '')}
+              </div>
+            </div>
+
+            ${
+              job
+                ? `<div class="ota-job-panel ota-status-${job.status}" style="margin-top: 8px;">
+                    <div class="ota-status-header">
+                      <span>OTA: ${job.status.toUpperCase()} ${job.status === 'downloading' ? `(${job.progress_pct}%)` : ''}</span>
+                      ${job.error_message ? `<span class="ota-error-text" title="${job.error_message}">${job.error_message}</span>` : ''}
+                    </div>
+                    ${job.status === 'downloading' ? `<div class="ota-progress-bar"><div class="ota-progress-fill" style="width: ${job.progress_pct}%"></div></div>` : ''}
+                  </div>`
+                : ''
+            }
+
             <div class="role-assign-row">
               <label for="assignRoleSelect-${dev.device_id}">Assign Body Role:</label>
               <select id="assignRoleSelect-${dev.device_id}" class="form-select">
@@ -747,10 +781,17 @@ class DashboardApp {
             </div>
 
             <div class="card-footer" style="margin-top: 8px;">
-              <span><code>${dev.device_id}</code> (FW: v${fwVer})</span>
+              <span><code>${dev.device_id}</code></span>
               <div class="card-actions">
                 <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'identify')">Identify</button>
                 <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'reboot')">Reboot</button>
+                ${
+                  hasActiveOta
+                    ? `<button class="btn btn-secondary btn-sm" disabled>Updating...</button>`
+                    : isBatteryLow
+                      ? `<button class="btn btn-sm btn-ota-usb" title="Battery < 30% (${dev.battery_pct}%). Click to update with USB power override." onclick="window.dashboardApp.triggerOTA('${dev.device_id}', 'latest', true)">⚡ Update (USB)</button>`
+                      : `<button class="btn ${isOutdated ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="window.dashboardApp.triggerOTA('${dev.device_id}')">Update</button>`
+                }
               </div>
             </div>
           `;
@@ -987,19 +1028,31 @@ class DashboardApp {
     }
   }
 
-  public async triggerOTA(deviceId: string, version: string = 'latest'): Promise<boolean> {
+  public async triggerOTA(deviceId: string, version: string = 'latest', force: boolean = false): Promise<boolean> {
     try {
-      const res = await fetch(`/v1/devices/${deviceId}/ota?version=${encodeURIComponent(version)}`, {
+      const queryParams = new URLSearchParams({ version });
+      if (force) {
+        queryParams.set('force', 'true');
+      }
+      const res = await fetch(`/v1/devices/${deviceId}/ota?${queryParams.toString()}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${ADMIN_TOKEN}`,
         },
-        body: JSON.stringify({ version }),
+        body: JSON.stringify({ version, force }),
       });
       if (res.status === 409) {
         const err = await res.json().catch(() => ({}));
-        alert(`OTA Rejected: ${err.detail || 'Device busy, offline, or battery < 30%'}`);
+        const detail = err.detail || 'Device busy, offline, or battery < 30%';
+        if (!force && detail.toLowerCase().includes('battery')) {
+          const proceed = confirm(`OTA Blocked: ${detail}\n\nDevice appears to be running on USB power without battery (or battery < 30%).\n\nDo you want to override and flash over USB power anyway?`);
+          if (proceed) {
+            return this.triggerOTA(deviceId, version, true);
+          }
+        } else {
+          alert(`OTA Rejected: ${detail}`);
+        }
         return false;
       }
       if (!res.ok) {
@@ -1037,11 +1090,21 @@ class DashboardApp {
       return;
     }
 
-    const outdated = onlineDevices.filter((d) => d.firmware_version !== this.latestFirmware?.version);
+    const outdated = onlineDevices.filter((d) => {
+      const targetVer = (this.latestFirmwareByHw && d.hw && this.latestFirmwareByHw[d.hw]) || this.latestFirmware?.version;
+      return d.firmware_version !== targetVer;
+    });
     const targets = outdated.length > 0 ? outdated : onlineDevices;
 
-    if (!confirm(`Update ${targets.length} device(s) one at a time to latest firmware?`)) {
-      return;
+    const lowBattCount = targets.filter((d) => d.battery_pct !== null && d.battery_pct < 30).length;
+    let forceOverride = false;
+    if (lowBattCount > 0) {
+      forceOverride = confirm(`${lowBattCount} of ${targets.length} device(s) have < 30% battery or are on USB power without battery.\n\nProceed with USB Power Override enabled for all updates?`);
+      if (!forceOverride) return;
+    } else {
+      if (!confirm(`Update ${targets.length} device(s) one at a time to latest firmware?`)) {
+        return;
+      }
     }
 
     this.isUpdatingAll = true;
@@ -1050,9 +1113,9 @@ class DashboardApp {
     try {
       for (let i = 0; i < targets.length; i++) {
         const dev = targets[i];
-        if (btn) btn.innerText = `Updating ${i + 1}/${targets.length} (${dev.role})...`;
+        if (btn) btn.innerText = `Updating ${i + 1}/${targets.length} (${dev.role || dev.device_id})...`;
 
-        const started = await this.triggerOTA(dev.device_id);
+        const started = await this.triggerOTA(dev.device_id, 'latest', forceOverride);
         if (!started) {
           console.warn(`Could not start OTA on device ${dev.device_id}, moving to next.`);
           continue;
@@ -1075,7 +1138,7 @@ class DashboardApp {
       this.isUpdatingAll = false;
       if (btn) {
         btn.disabled = false;
-        btn.innerText = '⬆️ Update all (one at a time)';
+        btn.innerText = '⚡ Update Outdated';
       }
     }
   }
@@ -1099,6 +1162,8 @@ class DashboardApp {
       });
       if (!res.ok) {
         alert(`Failed to send command: ${res.statusText}`);
+      } else if (cmd === 'reboot') {
+        this.addLog('sys', `Reboot signal dispatched to tracker ${deviceId}. Clean reset in progress (reconnecting in ~3s).`, 'REBOOT');
       }
     } catch (e: any) {
       alert(`Error sending command: ${e.message}`);

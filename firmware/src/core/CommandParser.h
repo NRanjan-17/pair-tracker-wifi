@@ -27,6 +27,7 @@ struct ParsedCommand {
     String otaSha256;
     size_t otaSize;
     String otaVersion;
+    bool otaForce;
 };
 
 class CommandParser {
