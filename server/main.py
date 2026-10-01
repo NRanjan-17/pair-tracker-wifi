@@ -636,6 +636,9 @@ async def announce_device(
         hw=payload.hw or "esp32c6",
         flash_size=payload.flash_size or 0,
         free_heap=payload.free_heap or 0,
+        firmware_version=payload.firmware_version,
+        protocol_version=payload.protocol_version,
+        battery_pct=payload.battery_pct,
     )
     tracker_manager.cache_announced_telemetry(
         device_id=payload.device_id,
