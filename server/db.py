@@ -89,6 +89,13 @@ class Database:
             conn.commit()
         return self.get_device(device_id)
 
+    def update_device_role(self, device_id: str, role: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE devices SET role = ? WHERE device_id = ?", (role, device_id))
+            conn.commit()
+        return self.get_device(device_id)
+
     def update_device_metrics(
         self,
         device_id: str,

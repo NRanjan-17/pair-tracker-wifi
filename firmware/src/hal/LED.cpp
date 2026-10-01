@@ -10,6 +10,11 @@ void HalLED::begin() {
     pinMode(LED_PIN, OUTPUT);
     set(false);
 #endif
+#if defined(ESP8266)
+    // NodeMCU v2/v3 boards commonly have an onboard LED on GPIO16 (D0) in addition to GPIO2
+    pinMode(16, OUTPUT);
+    digitalWrite(16, HIGH); // Inactive (active LOW)
+#endif
 }
 
 void HalLED::set(bool on) {
@@ -17,6 +22,10 @@ void HalLED::set(bool on) {
 #ifdef LED_PIN
     uint8_t pinVal = on ? LED_ACTIVE_LEVEL : (LED_ACTIVE_LEVEL == HIGH ? LOW : HIGH);
     digitalWrite(LED_PIN, pinVal);
+#endif
+#if defined(ESP8266)
+    uint8_t pinVal16 = on ? LOW : HIGH;
+    digitalWrite(16, pinVal16);
 #endif
 }
 

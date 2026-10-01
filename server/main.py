@@ -121,6 +121,9 @@ class DeviceCommandRequest(BaseModel):
     type: str
     duration_ms: Optional[int] = 3000
 
+class DeviceRoleUpdateRequest(BaseModel):
+    role: str
+
 DASHBOARD_DIST_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "dist"
 DASHBOARD_ASSETS_DIR = DASHBOARD_DIST_DIR / "assets"
 FIRMWARE_BIN_DIR = Path(__file__).resolve().parent / "firmware_bin"
@@ -577,6 +580,14 @@ async def announce_device(
         device_id=payload.device_id,
         announced_version=payload.firmware_version or "unknown",
     )
+    await tracker_manager.broadcast_dashboard({
+        "type": "log",
+        "level": "info",
+        "category": "announce",
+        "message": f"Device announced: {payload.device_id} ({payload.hw or 'esp12e'}) role='{payload.role}' heap={payload.free_heap or 0}B batt={payload.battery_pct or 0}% fw=v{payload.firmware_version or 'unknown'}",
+        "device_id": payload.device_id,
+        "timestamp_ms": now_ms,
+    })
 
     return {
         "status": "ok",
@@ -590,6 +601,22 @@ async def announce_device(
 @app.get("/v1/devices")
 async def list_devices():
     return tracker_manager.get_device_summary()
+
+@app.post("/v1/devices/{device_id}/role")
+async def update_device_role_endpoint(
+    device_id: str,
+    payload: DeviceRoleUpdateRequest,
+    _admin: bool = Depends(verify_admin_token),
+):
+    role = payload.role.strip().lower()
+    if not roles_registry.is_valid_role(role) and role != "unassigned":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid role '{role}'. Must be one of valid roles or 'unassigned'.",
+        )
+    db.update_device_role(device_id, role)
+    await tracker_manager.set_device_role(device_id, role)
+    return {"status": "role_updated", "device_id": device_id, "role": role}
 
 @app.post("/v1/devices/{device_id}/command")
 async def send_device_command(

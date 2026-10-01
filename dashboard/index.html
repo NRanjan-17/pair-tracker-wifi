@@ -48,6 +48,7 @@
             <button id="tabTrackers" class="tab-btn active">📡 Live Trackers</button>
             <button id="tabSessions" class="tab-btn">📁 Recorded Sessions (<span id="sessionCountBadge">0</span>)</button>
             <button id="tabFlash" class="tab-btn">⚡ Flash & Provision</button>
+            <button id="tabLogs" class="tab-btn">📋 Live Logs & Telemetry</button>
           </div>
 
           <!-- Tab View 1: Live Trackers -->
@@ -65,11 +66,15 @@
               <!-- Populated dynamically -->
             </div>
 
+            <!-- Discovered / Unassigned Trackers Section -->
             <div id="extraDevicesSection" style="display: none; margin-top: 24px;">
               <div class="panel-header">
-                <h3>Additional Devices</h3>
+                <h3>⚡ Discovered & Unassigned Trackers (<span id="unassignedCountBadge">0</span>)</h3>
               </div>
-              <div id="extraDevicesContainer" class="cards-grid"></div>
+              <p class="panel-desc">Active trackers connected over WiFi without an assigned body role. Select a role and assign it below:</p>
+              <div id="extraDevicesContainer" class="cards-grid">
+                <!-- Dynamically populated -->
+              </div>
             </div>
           </div>
 
@@ -134,9 +139,12 @@
                 <input type="text" id="flashToken" class="form-input" placeholder="Leave blank to auto-generate" />
               </div>
 
-              <div class="form-actions">
-                <button type="button" id="btnStartFlash" class="btn btn-primary btn-flash-submit">
+              <div class="form-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button type="button" id="btnStartFlash" class="btn btn-primary btn-flash-submit" style="flex: 1; min-width: 220px;">
                   ⚡ Connect, Flash & Provision
+                </button>
+                <button type="button" id="btnQuickProvision" class="btn btn-secondary btn-flash-submit" style="flex: 1; min-width: 220px; border-color: var(--accent); color: var(--accent);">
+                  ⚙️ Quick Provision Only (WiFi & Role)
                 </button>
               </div>
             </form>
@@ -147,7 +155,7 @@
                 <div id="stepItem1" class="step-row pending"><span class="step-num">1</span> Connect & Detect Chip (Web Serial)</div>
                 <div id="stepItem2" class="step-row pending"><span class="step-num">2</span> Register Role on Hub</div>
                 <div id="stepItem3" class="step-row pending"><span class="step-num">3</span> Fetch Firmware Binaries</div>
-                <div id="stepItem4" class="step-row pending"><span class="step-num">4</span> Flash ESP32-C6 (esptool-js)</div>
+                <div id="stepItem4" class="step-row pending"><span class="step-num">4</span> <span id="flashStepChipText">Flash Firmware (esptool-js)</span></div>
                 <div id="stepItem5" class="step-row pending"><span class="step-num">5</span> Send Provisioning Commands</div>
                 <div id="stepItem6" class="step-row pending"><span class="step-num">6</span> Announce & Verify Online</div>
               </div>
@@ -187,6 +195,39 @@
               </div>
             </div>
           </div>
+
+          <!-- Tab View 4: Live Logs & Telemetry -->
+          <div id="viewLogs" class="tab-content" style="display: none;">
+            <div class="panel-header">
+              <h2>Live Tracker Logs</h2>
+              <div class="panel-header-actions">
+                <span id="logEventCountBadge" class="badge badge-secondary" style="font-size: 0.72rem; padding: 4px 8px;">0 events</span>
+                <button id="btnClearTelemetryLog" class="btn btn-sm btn-secondary">Clear</button>
+                <button id="btnCopyTelemetryLog" class="btn btn-sm btn-secondary">Copy</button>
+              </div>
+            </div>
+            <p class="panel-desc">Real-time incoming frames, packet headers, announces, battery updates, and commands from trackers.</p>
+
+            <div class="log-controls-bar">
+              <div class="log-filter-group">
+                <button class="btn-filter active" data-filter="all">All</button>
+                <button class="btn-filter" data-filter="stream">Stream</button>
+                <button class="btn-filter" data-filter="announce">Announce</button>
+                <button class="btn-filter" data-filter="role">Role / State</button>
+                <button class="btn-filter" data-filter="warn">Warnings</button>
+              </div>
+              <div class="log-toggles">
+                <label class="toggle-label" title="Automatically scroll to bottom on new messages">
+                  <input type="checkbox" id="chkAutoScroll" checked /> Auto-scroll
+                </label>
+                <button id="btnPauseLog" class="btn btn-sm btn-secondary">⏸ Pause</button>
+              </div>
+            </div>
+
+            <div class="telemetry-console-wrapper">
+              <div id="telemetryConsoleLog" class="telemetry-console-log"></div>
+            </div>
+          </div>
         </section>
 
         <!-- Right Panel: 3D Visualizer & Telemetry -->
@@ -206,6 +247,22 @@
 
           <!-- Three.js Canvas Container -->
           <div id="threeContainer" class="canvas-wrapper"></div>
+
+          <!-- Collapsible Bottom Live Console Drawer -->
+          <div id="bottomLogDrawer" class="bottom-log-drawer" style="display: none;">
+            <div class="drawer-header">
+              <div class="drawer-title">
+                <span class="drawer-dot"></span>
+                <strong>Live Tracker Telemetry Console</strong>
+                <span id="drawerRateBadge" class="badge-mini">0 Hz</span>
+              </div>
+              <div class="drawer-actions">
+                <button id="btnDrawerClear" class="btn-icon" title="Clear console">🗑</button>
+                <button id="btnCloseLogDrawer" class="btn-icon" title="Collapse console">✕</button>
+              </div>
+            </div>
+            <div id="drawerConsoleLog" class="drawer-console-log"></div>
+          </div>
 
           <!-- Playback Toolbar Overlay (in 3D Viewport) -->
           <div id="playbackOverlay" class="playback-bar" style="display: none;">
@@ -255,6 +312,11 @@
             <div class="telemetry-item">
               <span class="lbl">Avg Loss</span>
               <span id="valAvgLoss" class="val">0.00%</span>
+            </div>
+            <div class="telemetry-item action" style="margin-left: auto;">
+              <button id="btnToggleLogDrawer" class="btn btn-sm btn-secondary" style="font-size: 0.75rem; padding: 4px 10px; cursor: pointer;">
+                📋 Live Console (<span id="quickLogCount">0</span>)
+              </button>
             </div>
           </div>
         </section>

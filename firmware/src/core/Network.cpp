@@ -3,6 +3,7 @@
 #include "CommandParser.h"
 #include "Config.h"
 #include "Roles.h"
+#include "SerialCLI.h"
 #include "Version.h"
 #include "../hal/Battery.h"
 #include "../hal/IMUBus.h"
@@ -69,6 +70,7 @@ bool TrackerNetwork::connectWiFi() {
     while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 12000) {
         delay(250);
         Serial.print(".");
+        serialCLI.process();
         yield();
     }
     Serial.println();
@@ -291,6 +293,18 @@ void TrackerNetwork::handleTextMessage(const char* jsonStr, size_t length) {
             Serial.printf("Command: OTA update to %s (size: %u, sha256: %s)\n",
                           cmd.otaVersion.c_str(), cmd.otaSize, cmd.otaSha256.c_str());
             performOTA(cmd.otaUrl, cmd.otaSha256, cmd.otaSize, cmd.otaVersion);
+            break;
+
+        case CommandType::SET_ROLE:
+            Serial.printf("Command: SET_ROLE - changing role to '%s'\n", cmd.role.c_str());
+            config.setRole(stringToRole(cmd.role));
+            announceDevice();
+            break;
+
+        case CommandType::REBOOT:
+            Serial.println("Command: REBOOT - restarting MCU now");
+            delay(100);
+            ESP.restart();
             break;
 
         default:

@@ -37,6 +37,13 @@ bool CommandParser::parse(const char* jsonStr, size_t length, ParsedCommand& cmd
         cmd.otaSize = doc["size"] | 0;
         cmd.otaVersion = doc["version"].as<String>();
         return true;
+    } else if (strcmp(typeStr, "set_role") == 0) {
+        cmd.type = CommandType::SET_ROLE;
+        cmd.role = doc["role"].as<String>();
+        return true;
+    } else if (strcmp(typeStr, "reboot") == 0) {
+        cmd.type = CommandType::REBOOT;
+        return true;
     }
 
     return false;

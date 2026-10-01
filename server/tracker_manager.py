@@ -260,7 +260,37 @@ class TrackerManager:
         device_dict = conn.to_dict()
         await self.broadcast_dashboard({"type": "device_connected", "device": device_dict})
         await self.broadcast_dashboard({"type": "device_state", **device_dict})
+        await self.broadcast_dashboard({
+            "type": "log",
+            "level": "info",
+            "category": "connect",
+            "message": f"Tracker connected: {device_id} ({conn.hw}) role={conn.role} heap={conn.free_heap}B",
+            "device_id": device_id,
+            "timestamp_ms": int(time.time() * 1000),
+        })
         return conn
+
+    async def set_device_role(self, device_id: str, new_role: str):
+        if device_id in self.active_connections:
+            conn = self.active_connections[device_id]
+            old_role = conn.role
+            if old_role in self.role_to_device and self.role_to_device[old_role] == device_id:
+                del self.role_to_device[old_role]
+            conn.role = new_role
+            conn.role_id = roles_registry.get_role_id(new_role) if roles_registry.is_valid_role(new_role) else 0
+            if new_role != "unassigned":
+                self.role_to_device[new_role] = device_id
+            await self.send_command_to_device(device_id, {"type": "set_role", "role": new_role})
+            device_dict = conn.to_dict()
+            await self.broadcast_dashboard({"type": "device_state", **device_dict})
+            await self.broadcast_dashboard({
+                "type": "log",
+                "level": "info",
+                "category": "role",
+                "message": f"Role assigned: {device_id} ({conn.hw}) changed from '{old_role}' to '{new_role}'",
+                "device_id": device_id,
+                "timestamp_ms": int(time.time() * 1000),
+            })
 
     async def disconnect_tracker(self, device_id: str):
         if device_id in self.active_connections:

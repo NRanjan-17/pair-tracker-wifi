@@ -11,7 +11,9 @@ enum class CommandType {
     STOP_RECORDING,
     IDENTIFY,
     CALIBRATE,
-    OTA
+    OTA,
+    SET_ROLE,
+    REBOOT
 };
 
 struct ParsedCommand {
@@ -20,6 +22,7 @@ struct ParsedCommand {
     int64_t offset_ms;
     uint32_t rtt_ms;
     uint32_t duration_ms;
+    String role;
     String otaUrl;
     String otaSha256;
     size_t otaSize;

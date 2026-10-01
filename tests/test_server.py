@@ -370,3 +370,41 @@ def test_firmware_manifests_multi_target():
     assert res_lat_c6.status_code == 200
     assert res_lat_c6.json().get("hw") == "esp32c6"
 
+def test_device_role_update_endpoint():
+    admin_headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    dev_id = "5C:CF:7F:11:22:33"
+
+    # 1. Announce with role unassigned
+    res = client.post(
+        "/v1/devices/announce",
+        json={"device_id": dev_id, "role": "unassigned", "hw": "esp12e", "free_heap": 40960},
+    )
+    assert res.status_code == 200
+
+    # 2. Update role to chest via /role endpoint
+    res = client.post(
+        f"/v1/devices/{dev_id}/role",
+        json={"role": "chest"},
+        headers=admin_headers,
+    )
+    assert res.status_code == 200
+    assert res.json()["role"] == "chest"
+    assert res.json()["status"] == "role_updated"
+
+    # 3. Verify in device list
+    res = client.get("/v1/devices")
+    assert res.status_code == 200
+    devices = res.json()
+    matched = [d for d in devices if d["device_id"] == dev_id]
+    assert len(matched) == 1
+    assert matched[0]["role"] == "chest"
+    assert matched[0]["hw"] == "esp12e"
+
+    # 4. Invalid role rejected
+    res = client.post(
+        f"/v1/devices/{dev_id}/role",
+        json={"role": "invalid_banana_role"},
+        headers=admin_headers,
+    )
+    assert res.status_code == 400
+

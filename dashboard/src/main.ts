@@ -36,6 +36,13 @@ class DashboardApp {
   private sessionsList: any[] = [];
   private exportSessionId: string | null = null;
 
+  // Live Logging & Console
+  private logEntries: Array<{ time: string; badge: string; category: string; message: string }> = [];
+  private activeLogFilter: string = 'all';
+  private autoScroll: boolean = true;
+  private logPaused: boolean = false;
+  private lastStreamLogTime: number = 0;
+
   constructor() {
     this.initVisualizer();
     this.initPlayback();
@@ -129,40 +136,25 @@ class DashboardApp {
     const tabTrackers = document.getElementById('tabTrackers') as HTMLButtonElement;
     const tabSessions = document.getElementById('tabSessions') as HTMLButtonElement;
     const tabFlash = document.getElementById('tabFlash') as HTMLButtonElement;
+    const tabLogs = document.getElementById('tabLogs') as HTMLButtonElement;
     const viewTrackers = document.getElementById('viewTrackers') as HTMLElement;
     const viewSessions = document.getElementById('viewSessions') as HTMLElement;
     const viewFlash = document.getElementById('viewFlash') as HTMLElement;
+    const viewLogs = document.getElementById('viewLogs') as HTMLElement;
 
-    tabTrackers.addEventListener('click', () => {
-      tabTrackers.classList.add('active');
-      tabSessions.classList.remove('active');
-      if (tabFlash) tabFlash.classList.remove('active');
-      viewTrackers.style.display = 'flex';
-      viewSessions.style.display = 'none';
-      if (viewFlash) viewFlash.style.display = 'none';
-    });
+    const switchTab = (activeTab: HTMLElement, activeView: HTMLElement) => {
+      [tabTrackers, tabSessions, tabFlash, tabLogs].forEach((t) => t?.classList.remove('active'));
+      [viewTrackers, viewSessions, viewFlash, viewLogs].forEach((v) => { if (v) v.style.display = 'none'; });
+      activeTab.classList.add('active');
+      activeView.style.display = 'flex';
+    };
 
-    tabSessions.addEventListener('click', () => {
-      tabSessions.classList.add('active');
-      tabTrackers.classList.remove('active');
-      if (tabFlash) tabFlash.classList.remove('active');
-      viewSessions.style.display = 'flex';
-      viewTrackers.style.display = 'none';
-      if (viewFlash) viewFlash.style.display = 'none';
-      this.fetchSessions();
-    });
+    tabTrackers?.addEventListener('click', () => switchTab(tabTrackers, viewTrackers));
+    tabSessions?.addEventListener('click', () => { switchTab(tabSessions, viewSessions); this.fetchSessions(); });
+    tabFlash?.addEventListener('click', () => switchTab(tabFlash, viewFlash));
+    tabLogs?.addEventListener('click', () => switchTab(tabLogs, viewLogs));
 
-    if (tabFlash) {
-      tabFlash.addEventListener('click', () => {
-        tabFlash.classList.add('active');
-        tabTrackers.classList.remove('active');
-        tabSessions.classList.remove('active');
-        if (viewFlash) viewFlash.style.display = 'flex';
-        viewTrackers.style.display = 'none';
-        viewSessions.style.display = 'none';
-      });
-    }
-
+    this.initLoggingUI();
     this.initFlashUI();
 
     // Refresh sessions list
@@ -251,6 +243,7 @@ class DashboardApp {
     this.ws.onopen = () => {
       badge.className = 'badge badge-connected';
       badge.innerText = 'Connected Live';
+      this.addLog('sys', `Connected to Eidon server via WebSocket (${wsUrl})`, 'WS');
     };
 
     this.ws.onmessage = (event) => {
@@ -265,6 +258,7 @@ class DashboardApp {
     this.ws.onclose = () => {
       badge.className = 'badge badge-disconnected';
       badge.innerText = 'Disconnected (Reconnecting...)';
+      this.addLog('warn', 'WebSocket disconnected from server. Reconnecting in 2s...', 'DISCONNECT');
       setTimeout(() => this.connectWebSocket(), 2000);
     };
   }
@@ -304,6 +298,7 @@ class DashboardApp {
         this.activeSession = init.active_session;
         this.updateSessionUI();
         this.renderCards();
+        this.addLog('sys', `Server init: ${init.devices?.length || 0} registered devices, ${init.required_roles?.length || 0} required roles`, 'INIT');
         break;
       }
 
@@ -312,6 +307,7 @@ class DashboardApp {
         this.otaJobs.set(job.job_id, job);
         this.deviceToOtaJob.set(job.device_id, job);
         this.renderCards();
+        this.addLog('role', `OTA Job ${job.job_id} on ${job.device_id}: ${job.status.toUpperCase()} (${job.progress_pct}%)`, 'OTA');
         break;
       }
 
@@ -330,6 +326,25 @@ class DashboardApp {
         break;
       }
 
+      case 'device_connected': {
+        const dev = msg.device;
+        if (dev) {
+          const hw = (dev.hw || 'esp12e').toUpperCase();
+          this.addLog('announce', `Tracker connected: ${dev.device_id} (${hw}) role='${dev.role}' heap=${dev.free_heap || 0}B`, 'CONNECT');
+        }
+        break;
+      }
+
+      case 'device_disconnected': {
+        this.addLog('warn', `Tracker disconnected: ${msg.device_id} role='${msg.role}'`, 'DISCONNECT');
+        break;
+      }
+
+      case 'log': {
+        this.addLog(msg.category || 'sys', msg.message, msg.level?.toUpperCase() || 'INFO');
+        break;
+      }
+
       case 'sample':
       case 'pose_update': {
         const sample = msg as SampleMessage;
@@ -338,12 +353,24 @@ class DashboardApp {
         this.visualizer.handleSample(sample);
 
         // Update live stats on device state
-        const dev = this.roleToDevice.get(sample.role);
+        const dev = this.devices.get(sample.device_id) || this.roleToDevice.get(sample.role);
         if (dev) {
           dev.last_seen_ms = Date.now();
           dev.loss_pct = sample.loss_pct;
         }
         this.updateRecordingLossBanner();
+
+        // Throttled logging for live stream (~4 Hz to keep console performant)
+        const now = Date.now();
+        if (now - this.lastStreamLogTime > 250) {
+          this.lastStreamLogTime = now;
+          const q = sample.quat;
+          const qStr = q ? `q=[${q.map((v: number) => v.toFixed(3)).join(', ')}]` : '';
+          const isFlat = q && Math.abs(q[0] - 1.0) < 0.005 && Math.abs(q[1]) < 0.005 && Math.abs(q[2]) < 0.005 && Math.abs(q[3]) < 0.005;
+          const hw = (dev?.hw || 'esp12e').toUpperCase();
+          const note = isFlat ? ' [⚠️ No IMU / Flat Quat]' : '';
+          this.addLog('stream', `${sample.device_id} (${hw}) role:${sample.role} seq:${sample.seq} ${qStr} loss:${sample.loss_pct.toFixed(2)}%${note}`, 'STREAM');
+        }
         break;
       }
 
@@ -351,12 +378,14 @@ class DashboardApp {
         this.activeSession = msg.session;
         this.updateSessionUI();
         this.fetchSessions();
+        this.addLog('sys', `Recording session started: ${msg.session.name} (${msg.session.session_id})`, 'SESSION');
         break;
 
       case 'session_ended':
         this.activeSession = null;
         this.updateSessionUI();
         this.fetchSessions();
+        this.addLog('sys', `Recording session ended. Parquet saved.`, 'SESSION');
         break;
     }
   }
@@ -394,14 +423,17 @@ class DashboardApp {
       const isBatteryLow = isOnline && dev && dev.battery_pct !== null && dev.battery_pct < 30;
 
       const heap = isOnline && dev && dev.free_heap ? `${Math.round(dev.free_heap / 1024)} KB` : '—';
-      const hwName = (dev?.hw || 'esp32c6').toUpperCase();
+      const hwName = isOnline && dev?.hw ? dev.hw.toUpperCase() : '';
+      const hwBadgeHtml = isOnline && hwName
+        ? `<span class="role-tag-badge hw-badge" style="background: ${dev?.hw === 'esp12e' ? '#38bdf8' : '#818cf8'}; color: #0f172a; font-weight: 700; margin-left: 4px;">${hwName}</span>`
+        : '';
 
       card.innerHTML = `
         <div class="card-top">
           <div class="role-title">
             <span>${displayName}</span>
             <span class="role-tag-badge">${role}</span>
-            <span class="role-tag-badge hw-badge" style="background: ${dev?.hw === 'esp12e' ? '#38bdf8' : '#818cf8'}; color: #0f172a; font-weight: 700; margin-left: 4px;">${hwName}</span>
+            ${hwBadgeHtml}
           </div>
           <span class="status-indicator ${statusClass}">${statusText}</span>
         </div>
@@ -462,6 +494,93 @@ class DashboardApp {
       container.appendChild(card);
     }
 
+    // Render Discovered & Unassigned Trackers
+    const extraSection = document.getElementById('extraDevicesSection');
+    const extraContainer = document.getElementById('extraDevicesContainer');
+    const unassignedBadge = document.getElementById('unassignedCountBadge');
+
+    if (extraContainer) {
+      extraContainer.innerHTML = '';
+      const unassignedDevices = Array.from(this.devices.values()).filter(
+        (d) => d.online && (!d.role || d.role === 'unassigned' || !this.requiredRoles.includes(d.role))
+      );
+
+      if (unassignedBadge) {
+        unassignedBadge.innerText = `${unassignedDevices.length}`;
+      }
+
+      if (unassignedDevices.length > 0 && extraSection) {
+        extraSection.style.display = 'block';
+
+        for (const dev of unassignedDevices) {
+          const card = document.createElement('div');
+          card.className = 'card-role unassigned online';
+
+          const hwName = (dev.hw || 'esp12e').toUpperCase();
+          const batt = dev.battery_pct !== null ? `${dev.battery_pct}%` : '—';
+          const loss = `${dev.loss_pct.toFixed(2)}%`;
+          const lastSeen = this.formatTimeAgo(dev.last_seen_ms);
+          const heap = dev.free_heap ? `${Math.round(dev.free_heap / 1024)} KB` : '—';
+          const fwVer = dev.firmware_version || 'unknown';
+
+          card.innerHTML = `
+            <div class="card-top">
+              <div class="role-title">
+                <span>Unassigned Tracker</span>
+                <span class="role-tag-badge" style="background: #fbbf24; color: #0f172a; font-weight: 800;">UNASSIGNED</span>
+                <span class="role-tag-badge hw-badge" style="background: ${dev.hw === 'esp12e' ? '#38bdf8' : '#818cf8'}; color: #0f172a; font-weight: 700; margin-left: 4px;">${hwName}</span>
+              </div>
+              <span class="status-indicator status-online">ONLINE</span>
+            </div>
+
+            <div class="imu-notice-box">
+              ⚠️ <strong>No IMU Detected (Identity Quat Stream):</strong> Tracker is currently streaming fallback identity quaternions <code>[1.0, 0.0, 0.0, 0.0]</code>. Attach a BNO085 IMU to I2C pins (SDA=D2/GPIO4, SCL=D1/GPIO5).
+            </div>
+
+            <div class="card-metrics">
+              <div class="metric-col">
+                <span class="metric-lbl">Battery</span>
+                <span class="metric-val">${batt}</span>
+              </div>
+              <div class="metric-col">
+                <span class="metric-lbl">Heap</span>
+                <span class="metric-val">${heap}</span>
+              </div>
+              <div class="metric-col">
+                <span class="metric-lbl">Loss</span>
+                <span class="metric-val">${loss}</span>
+              </div>
+              <div class="metric-col">
+                <span class="metric-lbl">Last Seen</span>
+                <span class="metric-val">${lastSeen}</span>
+              </div>
+            </div>
+
+            <div class="role-assign-row">
+              <label for="assignRoleSelect-${dev.device_id}">Assign Body Role:</label>
+              <select id="assignRoleSelect-${dev.device_id}" class="form-select">
+                <option value="">-- Choose Role --</option>
+                ${this.requiredRoles.map((r) => `<option value="${r}">${r.replace(/_/g, ' ').toUpperCase()}</option>`).join('')}
+              </select>
+              <button class="btn btn-primary btn-sm" onclick="window.dashboardApp.assignRole('${dev.device_id}')">Assign</button>
+            </div>
+
+            <div class="card-footer" style="margin-top: 10px;">
+              <span><code>${dev.device_id}</code> (FW: v${fwVer})</span>
+              <div class="card-actions">
+                <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'identify')">Blink LED</button>
+                <button class="btn btn-secondary btn-sm" onclick="window.dashboardApp.sendCommand('${dev.device_id}', 'reboot')">Reboot</button>
+              </div>
+            </div>
+          `;
+
+          extraContainer.appendChild(card);
+        }
+      } else if (extraSection) {
+        extraSection.style.display = 'none';
+      }
+    }
+
     // Update Summary Badge
     const summaryBadge = document.getElementById('roleSummary')!;
     summaryBadge.innerText = `${onlineRequiredCount} / ${this.requiredRoles.length} Online`;
@@ -473,11 +592,196 @@ class DashboardApp {
       summaryBadge.style.borderColor = 'var(--danger)';
     }
 
-    // Telemetry bar active trackers
+    // Telemetry bar active trackers (count all online devices)
     const activeEl = document.getElementById('valActiveTrackers');
     if (activeEl && !this.visualizer.isPlaybackMode) {
-      activeEl.innerText = `${this.roleToDevice.size}`;
+      const activeCount = Array.from(this.devices.values()).filter((d) => d.online).length;
+      activeEl.innerText = `${activeCount}`;
     }
+  }
+
+  public async assignRole(deviceId: string) {
+    const sel = document.getElementById(`assignRoleSelect-${deviceId}`) as HTMLSelectElement;
+    if (!sel) return;
+    const role = sel.value;
+    if (!role) {
+      alert('Please select a body role from the dropdown.');
+      return;
+    }
+
+    try {
+      const res = await fetch(`/v1/devices/${deviceId}/role`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${ADMIN_TOKEN}`,
+        },
+        body: JSON.stringify({ role }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        alert(`Failed to assign role: ${err.detail}`);
+        return;
+      }
+
+      this.addLog('role', `Device ${deviceId} assigned role '${role}'`, 'ROLE');
+      const dev = this.devices.get(deviceId);
+      if (dev) {
+        if (dev.role && this.roleToDevice.get(dev.role)?.device_id === deviceId) {
+          this.roleToDevice.delete(dev.role);
+        }
+        dev.role = role;
+        if (dev.online) {
+          this.roleToDevice.set(role, dev);
+        }
+      }
+      this.renderCards();
+    } catch (err: any) {
+      alert(`Error assigning role: ${err.message}`);
+    }
+  }
+
+  public addLog(category: string, message: string, badgeText: string = 'INFO') {
+    if (this.logPaused) return;
+
+    const now = new Date();
+    const timeStr = `${now.toTimeString().split(' ')[0]}.${String(now.getMilliseconds()).padStart(3, '0')}`;
+    const entry = { time: timeStr, badge: badgeText, category, message };
+    this.logEntries.push(entry);
+    if (this.logEntries.length > 800) {
+      this.logEntries.shift();
+    }
+
+    const countBadge = document.getElementById('logEventCountBadge');
+    if (countBadge) countBadge.innerText = `${this.logEntries.length} events`;
+    const quickBadge = document.getElementById('quickLogCount');
+    if (quickBadge) quickBadge.innerText = `${this.logEntries.length}`;
+
+    const consoleEl = document.getElementById('telemetryConsoleLog');
+    if (consoleEl && (this.activeLogFilter === 'all' || this.activeLogFilter === category)) {
+      this.appendLogLine(consoleEl, entry);
+      if (this.autoScroll) {
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+      }
+    }
+
+    const drawerEl = document.getElementById('drawerConsoleLog');
+    if (drawerEl) {
+      this.appendLogLine(drawerEl, entry);
+      if (this.autoScroll) {
+        drawerEl.scrollTop = drawerEl.scrollHeight;
+      }
+    }
+  }
+
+  private appendLogLine(targetEl: HTMLElement, entry: { time: string; badge: string; category: string; message: string }) {
+    const line = document.createElement('div');
+    line.className = 'log-line';
+    const badgeClass = `log-badge log-badge-${entry.category}`;
+    line.innerHTML = `
+      <span class="log-time">${entry.time}</span>
+      <span class="${badgeClass}">${entry.badge}</span>
+      <span class="log-msg">${this.escapeHtml(entry.message)}</span>
+    `;
+    targetEl.appendChild(line);
+    while (targetEl.children.length > 500) {
+      targetEl.removeChild(targetEl.firstChild!);
+    }
+  }
+
+  private reRenderConsoleLogs() {
+    const consoleEl = document.getElementById('telemetryConsoleLog');
+    if (!consoleEl) return;
+    consoleEl.innerHTML = '';
+    const filtered = this.activeLogFilter === 'all'
+      ? this.logEntries
+      : this.logEntries.filter((e) => e.category === this.activeLogFilter);
+    filtered.forEach((e) => this.appendLogLine(consoleEl, e));
+    if (this.autoScroll) {
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
+  }
+
+  private initLoggingUI() {
+    const filterBtns = document.querySelectorAll('.btn-filter');
+    filterBtns.forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        filterBtns.forEach((b) => b.classList.remove('active'));
+        const target = e.currentTarget as HTMLButtonElement;
+        target.classList.add('active');
+        this.activeLogFilter = target.dataset.filter || 'all';
+        this.reRenderConsoleLogs();
+      });
+    });
+
+    const chkAutoScroll = document.getElementById('chkAutoScroll') as HTMLInputElement;
+    if (chkAutoScroll) {
+      chkAutoScroll.addEventListener('change', () => {
+        this.autoScroll = chkAutoScroll.checked;
+      });
+    }
+
+    const btnPause = document.getElementById('btnPauseLog');
+    if (btnPause) {
+      btnPause.addEventListener('click', () => {
+        this.logPaused = !this.logPaused;
+        btnPause.innerText = this.logPaused ? '▶ Resume' : '⏸ Pause';
+      });
+    }
+
+    const btnClearLogs = document.getElementById('btnClearTelemetryLog');
+    if (btnClearLogs) {
+      btnClearLogs.addEventListener('click', () => {
+        this.logEntries = [];
+        const consoleEl = document.getElementById('telemetryConsoleLog');
+        if (consoleEl) consoleEl.innerHTML = '';
+        const drawerEl = document.getElementById('drawerConsoleLog');
+        if (drawerEl) drawerEl.innerHTML = '';
+        const countBadge = document.getElementById('logEventCountBadge');
+        if (countBadge) countBadge.innerText = '0 events';
+        const quickBadge = document.getElementById('quickLogCount');
+        if (quickBadge) quickBadge.innerText = '0';
+      });
+    }
+
+    const btnCopyLogs = document.getElementById('btnCopyTelemetryLog');
+    if (btnCopyLogs) {
+      btnCopyLogs.addEventListener('click', () => {
+        const text = this.logEntries.map((e) => `[${e.time}] [${e.badge}] ${e.message}`).join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+          alert('Telemetry logs copied to clipboard!');
+        });
+      });
+    }
+
+    // Bottom drawer toggle
+    const btnToggleDrawer = document.getElementById('btnToggleLogDrawer');
+    const bottomDrawer = document.getElementById('bottomLogDrawer');
+    const btnCloseDrawer = document.getElementById('btnCloseLogDrawer');
+    const btnDrawerClear = document.getElementById('btnDrawerClear');
+
+    if (btnToggleDrawer && bottomDrawer) {
+      btnToggleDrawer.addEventListener('click', () => {
+        const isHidden = bottomDrawer.style.display === 'none' || !bottomDrawer.style.display;
+        bottomDrawer.style.display = isHidden ? 'flex' : 'none';
+      });
+    }
+    if (btnCloseDrawer && bottomDrawer) {
+      btnCloseDrawer.addEventListener('click', () => {
+        bottomDrawer.style.display = 'none';
+      });
+    }
+    if (btnDrawerClear) {
+      btnDrawerClear.addEventListener('click', () => {
+        const drawerEl = document.getElementById('drawerConsoleLog');
+        if (drawerEl) drawerEl.innerHTML = '';
+      });
+    }
+  }
+
+  private escapeHtml(str: string): string {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   public async fetchLatestFirmware() {
@@ -1020,46 +1324,16 @@ class DashboardApp {
       });
     }
 
-    if (!btnStartFlash) return;
+    const btnQuickProvision = document.getElementById('btnQuickProvision') as HTMLButtonElement;
 
-    btnStartFlash.addEventListener('click', async () => {
-      const role = roleSelect ? roleSelect.value : 'chest';
-      const ssidInput = document.getElementById('flashSsid') as HTMLInputElement;
-      const passInput = document.getElementById('flashPassword') as HTMLInputElement;
-      const tokenInput = document.getElementById('flashToken') as HTMLInputElement;
-
-      const ssid = ssidInput ? ssidInput.value.trim() : '';
-      const pass = passInput ? passInput.value : '';
-      const host = hostInput ? hostInput.value.trim() || 'pair.local' : 'pair.local';
-      const port = portInput ? parseInt(portInput.value || '8000', 10) : 8000;
-      const token = tokenInput ? tokenInput.value.trim() : '';
-
-      if (!ssid) {
-        alert('Please enter your WiFi SSID.');
-        return;
-      }
-
-      const statusSection = document.getElementById('flashStatusSection')!;
+    const setupFlasherInstance = (btn1: HTMLButtonElement, btn2: HTMLButtonElement | null) => {
       const consoleLog = document.getElementById('flashConsoleLog')!;
       const switchOnCard = document.getElementById('switchOnTrackerCard')!;
       const successCard = document.getElementById('flashSuccessCard')!;
       const progressFill = document.getElementById('flashProgressBarFill')!;
       const progressText = document.getElementById('flashProgressText')!;
 
-      statusSection.style.display = 'flex';
-      switchOnCard.style.display = 'none';
-      successCard.style.display = 'none';
-      progressFill.style.width = '0%';
-      progressText.innerText = 'Connecting...';
-      btnStartFlash.disabled = true;
-
-      // Reset stepper status
-      for (let i = 1; i <= 6; i++) {
-        const el = document.getElementById(`stepItem${i}`);
-        if (el) el.className = 'step-row pending';
-      }
-
-      this.flasher = new TrackerFlasher({
+      return new TrackerFlasher({
         onStepChange: (stepNum, stepName) => {
           for (let i = 1; i <= 6; i++) {
             const el = document.getElementById(`stepItem${i}`);
@@ -1084,7 +1358,7 @@ class DashboardApp {
           switchOnCard.style.display = 'flex';
           const switchText = switchOnCard.querySelector('p');
           if (switchText) {
-            switchText.innerHTML = `Device <strong>${mac}</strong> flashed! Switch power ON or disconnect USB. Waiting for it to connect to WiFi and announce...`;
+            switchText.innerHTML = `Device <strong>${mac}</strong> configured! Ensure power is ON. Waiting for it to connect to WiFi and announce...`;
           }
         },
         onSuccess: (mac, provisionedRole) => {
@@ -1100,29 +1374,113 @@ class DashboardApp {
           if (msgEl) {
             msgEl.innerHTML = `Device <strong>${mac}</strong> announced as <strong>${provisionedRole}</strong> and is online!`;
           }
-          btnStartFlash.disabled = false;
+          btn1.disabled = false;
+          if (btn2) btn2.disabled = false;
         },
         onError: (err) => {
-          btnStartFlash.disabled = false;
+          btn1.disabled = false;
+          if (btn2) btn2.disabled = false;
           progressText.innerText = `Error: ${err.message}`;
           alert(`Flashing / Provisioning Error: ${err.message}`);
         },
       });
+    };
 
-      try {
-        await this.flasher.start({
-          role,
-          ssid,
-          password: pass,
-          serverHost: host,
-          serverPort: port,
-          token: token || undefined,
-          adminToken: ADMIN_TOKEN,
-        });
-      } catch (err: any) {
-        btnStartFlash.disabled = false;
+    const getFlashFormConfig = () => {
+      const role = roleSelect ? roleSelect.value : 'chest';
+      const ssidInput = document.getElementById('flashSsid') as HTMLInputElement;
+      const passInput = document.getElementById('flashPassword') as HTMLInputElement;
+      const tokenInput = document.getElementById('flashToken') as HTMLInputElement;
+
+      const ssid = ssidInput ? ssidInput.value.trim() : '';
+      const pass = passInput ? passInput.value : '';
+      const host = hostInput ? hostInput.value.trim() || 'pair.local' : 'pair.local';
+      const port = portInput ? parseInt(portInput.value || '8000', 10) : 8000;
+      const token = tokenInput ? tokenInput.value.trim() : '';
+
+      return { role, ssid, pass, host, port, token };
+    };
+
+    const resetStepperUI = (statusText: string) => {
+      const statusSection = document.getElementById('flashStatusSection')!;
+      const switchOnCard = document.getElementById('switchOnTrackerCard')!;
+      const successCard = document.getElementById('flashSuccessCard')!;
+      const progressFill = document.getElementById('flashProgressBarFill')!;
+      const progressText = document.getElementById('flashProgressText')!;
+
+      statusSection.style.display = 'flex';
+      switchOnCard.style.display = 'none';
+      successCard.style.display = 'none';
+      progressFill.style.width = '0%';
+      progressText.innerText = statusText;
+
+      for (let i = 1; i <= 6; i++) {
+        const el = document.getElementById(`stepItem${i}`);
+        if (el) el.className = 'step-row pending';
       }
-    });
+    };
+
+    if (btnStartFlash) {
+      btnStartFlash.addEventListener('click', async () => {
+        const cfg = getFlashFormConfig();
+        if (!cfg.ssid) {
+          alert('Please enter your WiFi SSID.');
+          return;
+        }
+
+        resetStepperUI('Connecting...');
+        btnStartFlash.disabled = true;
+        if (btnQuickProvision) btnQuickProvision.disabled = true;
+
+        this.flasher = setupFlasherInstance(btnStartFlash, btnQuickProvision);
+
+        try {
+          await this.flasher.start({
+            role: cfg.role,
+            ssid: cfg.ssid,
+            password: cfg.pass,
+            serverHost: cfg.host,
+            serverPort: cfg.port,
+            token: cfg.token || undefined,
+            adminToken: ADMIN_TOKEN,
+          });
+        } catch (err: any) {
+          btnStartFlash.disabled = false;
+          if (btnQuickProvision) btnQuickProvision.disabled = false;
+        }
+      });
+    }
+
+    if (btnQuickProvision) {
+      btnQuickProvision.addEventListener('click', async () => {
+        const cfg = getFlashFormConfig();
+        if (!cfg.ssid) {
+          alert('Please enter your WiFi SSID.');
+          return;
+        }
+
+        resetStepperUI('Connecting for Quick Provisioning...');
+        btnQuickProvision.disabled = true;
+        if (btnStartFlash) btnStartFlash.disabled = true;
+
+        this.flasher = setupFlasherInstance(btnQuickProvision, btnStartFlash);
+
+        try {
+          await this.flasher.quickProvision({
+            role: cfg.role,
+            ssid: cfg.ssid,
+            password: cfg.pass,
+            serverHost: cfg.host,
+            serverPort: cfg.port,
+            token: cfg.token || undefined,
+            adminToken: ADMIN_TOKEN,
+          });
+        } catch (err: any) {
+          btnQuickProvision.disabled = false;
+          if (btnStartFlash) btnStartFlash.disabled = false;
+        }
+      });
+    }
   }
 
   private startPeriodicUpdates() {
