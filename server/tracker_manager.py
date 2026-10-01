@@ -237,7 +237,7 @@ class TrackerManager:
                 conn.free_heap = dev_row["free_heap"]
             if dev_row.get("firmware_version") and dev_row["firmware_version"] != "unknown":
                 conn.firmware_version = dev_row["firmware_version"]
-            if dev_row.get("protocol_version"):
+            if dev_row.get("protocol_version") is not None:
                 conn.protocol_version = dev_row["protocol_version"]
                 conn.protocol_outdated = (conn.protocol_version < REQUIRED_PROTOCOL_VERSION)
             if dev_row.get("battery_pct") is not None:
@@ -405,7 +405,9 @@ class TrackerManager:
                 cached_fw = reg.get("firmware_version") or cached.get("firmware_version") or "unknown"
                 if cached_fw == "unknown" and cached.get("firmware_version"):
                     cached_fw = cached["firmware_version"]
-                cached_proto = reg.get("protocol_version") or cached.get("protocol_version") or 1
+                cached_proto = reg.get("protocol_version") if reg.get("protocol_version") is not None else cached.get("protocol_version")
+                if cached_proto is None:
+                    cached_proto = 1
                 cached_batt = reg.get("battery_pct") if reg.get("battery_pct") is not None else cached.get("battery_pct")
                 cached_hw = reg.get("hw") or cached.get("hw") or "esp32c6"
                 result.append({
