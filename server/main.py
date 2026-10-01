@@ -316,14 +316,15 @@ def _find_firmware_bin(version: str, hw: Optional[str] = None) -> Tuple[Path, st
     candidates = []
     if hw:
         candidates.append(FIRMWARE_BIN_DIR / hw / resolved_version / "firmware.bin")
-        candidates.append(FIRMWARE_BIN_DIR / hw / "firmware.bin")
-    else:
-        candidates.append(FIRMWARE_BIN_DIR / resolved_version / "firmware.bin")
-        if FIRMWARE_BIN_DIR.exists():
-            for sub in sorted(FIRMWARE_BIN_DIR.iterdir()):
-                if sub.is_dir():
-                    candidates.append(sub / resolved_version / "firmware.bin")
-                    candidates.append(sub / "firmware.bin")
+    candidates.append(FIRMWARE_BIN_DIR / resolved_version / "firmware.bin")
+    if FIRMWARE_BIN_DIR.exists():
+        for sub in sorted(FIRMWARE_BIN_DIR.iterdir()):
+            if sub.is_dir() and sub.name != hw:
+                candidates.append(sub / resolved_version / "firmware.bin")
+
+    if version == "latest":
+        if hw:
+            candidates.append(FIRMWARE_BIN_DIR / hw / "firmware.bin")
         candidates.append(FIRMWARE_BIN_DIR / "firmware.bin")
 
     for p in candidates:
