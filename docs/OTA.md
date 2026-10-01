@@ -6,7 +6,7 @@ This document describes the design, partition layout, bootloader rollback mechan
 
 ## 1. Two-Slot OTA Partition Table
 
-The ESP32-C6 has 4MB (0x400000 bytes) of onboard SPI NOR flash. To support robust failsafe OTA updates without risk of bricking devices, the tracker uses a two-slot OTA partition table defined in [`firmware/partitions_two_ota.csv`](file:///Users/nalinishranjan/Desktop/pair-tracker-wifi/firmware/partitions_two_ota.csv).
+The ESP32-C6 has 4MB (0x400000 bytes) of onboard SPI NOR flash. To support robust failsafe OTA updates without risk of bricking devices, the tracker uses a two-slot OTA partition table defined in [`firmware/partitions_two_ota.csv`](../firmware/partitions_two_ota.csv).
 
 ### Partition Layout
 

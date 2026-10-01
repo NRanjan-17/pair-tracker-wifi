@@ -164,7 +164,7 @@ Rebooting device...
 
 ## 6. Tracker Role Mapping Table
 
-Body roles are defined in [`roles.yaml`](file:///Users/nalinishranjan/Desktop/pair-tracker-wifi/roles.yaml) and encoded as a `uint8` identifier:
+Body roles are defined in [`roles.yaml`](../roles.yaml) and encoded as a `uint8` identifier:
 
 | ID | Role Identifier | Required for Session | Physical Placement & Sensor Orientation |
 |:---:|:---|:---:|:---|
@@ -216,7 +216,7 @@ Before strapping a tracker to an actor, perform this rapid physical checkout:
 
 Once a tracker is flashed with initial firmware over USB, all subsequent firmware upgrades can be performed wirelessly over WiFi without physical access or cables.
 
-Refer to [`docs/OTA.md`](file:///Users/nalinishranjan/Desktop/pair-tracker-wifi/docs/OTA.md) for full documentation on:
+Refer to [`docs/OTA.md`](OTA.md) for full documentation on:
 - Two-slot A/B partition layout (`partitions_two_ota.csv`).
 - Failsafe bootloader rollback mechanism (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`).
 - Building releases with `make release VERSION=x.y.z`.

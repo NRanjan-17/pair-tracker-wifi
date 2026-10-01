@@ -185,7 +185,7 @@ Recorded sessions can be exported directly from the **Recorded Sessions** tab by
 ### Export File Formats & Structures
 
 #### 1. Biovision Hierarchy (`.bvh`)
-- **Hierarchy**: Defined from [`skeleton.json`](file:///Users/nalinishranjan/Desktop/pair-tracker-wifi/dashboard/src/skeleton.json) with `chest` as `ROOT`, bone lengths configured as `OFFSET` values in meters, and rotation-only channels:
+- **Hierarchy**: Defined from [`skeleton.json`](../dashboard/src/skeleton.json) with `chest` as `ROOT`, bone lengths configured as `OFFSET` values in meters, and rotation-only channels:
   ```text
   HIERARCHY
   ROOT chest

@@ -6,7 +6,7 @@ This guide covers all automated and manual verification procedures for the **pai
 
 ## 1. Quick Test Commands (Makefile Targets)
 
-The project includes five primary testing targets in the top-level [`Makefile`](file:///Users/nalinishranjan/Desktop/pair-tracker-wifi/Makefile):
+The project includes five primary testing targets in the top-level [`Makefile`](../Makefile):
 
 | Makefile Command | Components Tested | Execution Time | Purpose |
 |:---|:---|:---|:---|
@@ -175,7 +175,7 @@ python3 tools/fake_tracker.py --roles required --raw
 
 ## 6. Hardware Verification with Real Trackers (`make test-hw`)
 
-When physical trackers are powered on and connected to the network, use [`tools/hw_check.py`](file:///Users/nalinishranjan/Desktop/pair-tracker-wifi/tools/hw_check.py) to inspect hardware telemetry:
+When physical trackers are powered on and connected to the network, use [`tools/hw_check.py`](../tools/hw_check.py) to inspect hardware telemetry:
 
 ```bash
 # Run against default server (http://localhost:8000)

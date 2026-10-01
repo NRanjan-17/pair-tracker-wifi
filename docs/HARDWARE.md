@@ -24,7 +24,7 @@ To build a full 7-node body motion capture tracking set, you will need 7 individ
 
 ## 2. Wiring & Pinout Table
 
-All pin definitions are confirmed against [`firmware/src/Hardware.h`](../firmware/src/Hardware.h) and [`firmware/src/IMUManager.cpp`](../firmware/src/IMUManager.cpp).
+All pin definitions are confirmed against [`firmware/src/boards/esp32c6.h`](../firmware/src/boards/esp32c6.h), [`firmware/src/boards/esp12e.h`](../firmware/src/boards/esp12e.h), and [`firmware/src/hal/IMUBus.cpp`](../firmware/src/hal/IMUBus.cpp).
 
 ### 2.1 Primary Target: Seeed Studio XIAO ESP32-C6 Pinout
 
@@ -159,7 +159,7 @@ The Seeed Studio XIAO ESP32-C6 includes an onboard voltage divider connected bet
 - Low-side resistor: 100 kΩ
 - Division factor: $1:2$
 
-As implemented in [`firmware/src/Battery.h`](../firmware/src/Battery.h):
+As implemented in [`firmware/src/hal/Battery.h`](../firmware/src/hal/Battery.h):
 ```cpp
 // 16-sample averaged analog reading in millivolts
 uint32_t battMv = (totalMv * 2) / samples;

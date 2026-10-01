@@ -212,14 +212,14 @@ make doctor
 
  [PASS] Git CLI
         git version 2.54.0 (Apple Git-157)
- [PASS] Python Interpreter (3.14.7)
-        Location: /Users/nalinishranjan/Desktop/pair-tracker-wifi/.venv/bin/python3
+ [PASS] Python Interpreter (3.11+)
+        Location: <repo-root>/.venv/bin/python3
  [PASS] Node.js
-        v26.10.0 (Location: /opt/homebrew/bin/node)
+        v20+ (Location: /usr/local/bin/node or /opt/homebrew/bin/node)
  [PASS] npm
-        v11.19.1 (Location: /opt/homebrew/bin/npm)
+        v10+ (Location: /usr/local/bin/npm or /opt/homebrew/bin/npm)
  [PASS] PlatformIO Core CLI
-        PlatformIO Core, version 6.2.0 (Location: /Users/nalinishranjan/Desktop/pair-tracker-wifi/.venv/bin/pio)
+        PlatformIO Core, version 6.2.0 (Location: <repo-root>/.venv/bin/pio)
  [PASS] Python Dependencies
         All 9 core packages imported successfully
  [PASS] Dashboard Dependencies

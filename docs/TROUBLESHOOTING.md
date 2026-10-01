@@ -91,7 +91,7 @@ This guide provides symptom $\rightarrow$ cause $\rightarrow$ resolution steps f
 
 ### Unknown Role Error during Serial Provisioning
 - **Symptom**: Serial monitor prints `Error: unknown role 'LeftThigh'`.
-- **Cause**: Role names must exactly match the lowercase identifiers defined in [`roles.yaml`](file:///Users/nalinishranjan/Desktop/pair-tracker-wifi/roles.yaml).
+- **Cause**: Role names must exactly match the lowercase identifiers defined in [`roles.yaml`](../roles.yaml).
 - **Fix**: Use exact lowercase names:
   ```text
   set role chest
@@ -162,11 +162,11 @@ This guide provides symptom $\rightarrow$ cause $\rightarrow$ resolution steps f
   [IMU] ERROR: BNO085 not detected at address 0x4B!
   ```
 - **Cause**:
-  1. **I2C Address Pin (ADR) Miswired**: The BNO085 breakout defaults to address `0x4A` unless its ADR/DI pin is pulled HIGH to 3.3V (which sets it to address `0x4B`). In Pair Tracker firmware, `IMUManager::begin()` configures GPIO 18 (D10) as `OUTPUT HIGH` to select `0x4B`. If the ADR pin is floating, disconnected, or grounded, the sensor will respond at `0x4A` instead of `0x4B`.
+  1. **I2C Address Pin (ADR) Miswired**: The BNO085 breakout defaults to address `0x4A` unless its ADR/DI pin is pulled HIGH to 3.3V (which sets it to address `0x4B`). In Pair Tracker firmware, `HalIMUBus::begin()` ([`firmware/src/hal/IMUBus.cpp`](../firmware/src/hal/IMUBus.cpp)) configures GPIO 18 (D10) as `OUTPUT HIGH` to select `0x4B`. If the ADR pin is floating, disconnected, or grounded, the sensor will respond at `0x4A` instead of `0x4B`.
   2. **Loose SDA or SCL jumper wire**: Bad solder joint or intermittent breadboard wire.
   3. **Missing Power / Ground**: Sensor is unpowered.
 - **Fix**:
-  1. Verify the wiring against [`docs/HARDWARE.md`](file:///Users/nalinishranjan/Desktop/pair-tracker-wifi/docs/HARDWARE.md):
+  1. Verify the wiring against [`docs/HARDWARE.md`](HARDWARE.md):
      - XIAO GPIO 18 (D10) $\rightarrow$ BNO085 ADR (DI) pin.
      - XIAO GPIO 20 (D9) $\rightarrow$ BNO085 SDA.
      - XIAO GPIO 19 (D8) $\rightarrow$ BNO085 SCL.
