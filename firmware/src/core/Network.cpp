@@ -415,16 +415,7 @@ void TrackerNetwork::process() {
         delay(150);
 
 #if defined(ESP8266)
-        // Ensure boot strapping pins are configured for SPI Flash Boot (mode 3):
-        // GPIO0: HIGH (Flash boot)
-        // GPIO2: HIGH (Flash boot; release onboard LED on GPIO2 which is active LOW)
-        // GPIO15: LOW (Flash boot)
-        pinMode(0, INPUT_PULLUP);
-        pinMode(2, INPUT_PULLUP);
-        digitalWrite(2, HIGH);
-        pinMode(15, INPUT); // ESP-12E has external hardware pull-down on GPIO15
-        delay(50);
-        ESP.reset(); // Hardware reset (watchdog trigger)
+        ESP.restart(); // Clean software restart
 #elif defined(ESP32)
         esp_restart();
 #endif
