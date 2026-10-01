@@ -595,9 +595,9 @@ class DashboardApp {
       const rawFwVer = dev && dev.firmware_version ? dev.firmware_version : null;
       const devHw = dev?.hw || 'esp12e';
       const hwManifest = this.latestFirmwareByHw ? this.latestFirmwareByHw[devHw] : null;
-      const targetLatestVer = hwManifest?.version || this.latestFirmware?.version || '1.0.2';
+      const targetLatestVer = hwManifest?.version || this.latestFirmware?.version || null;
       const fwDisplay = rawFwVer ? (isOnline ? `v${rawFwVer}` : `v${rawFwVer} (offline)`) : '—';
-      const isOutdated = isOnline && rawFwVer !== null && rawFwVer !== 'unknown' && rawFwVer !== targetLatestVer;
+      const isOutdated = isOnline && rawFwVer !== null && rawFwVer !== 'unknown' && targetLatestVer !== null && rawFwVer !== targetLatestVer;
       const isProtoOutdated = dev && dev.protocol_outdated;
       const job = dev ? this.deviceToOtaJob.get(dev.device_id) : null;
       const hasActiveOta = job && ['queued', 'downloading', 'verifying', 'rebooting'].includes(job.status);
@@ -714,8 +714,8 @@ class DashboardApp {
           const fwDisplay = rawFwVer ? `v${rawFwVer}` : '—';
           const devHw = dev.hw || 'esp12e';
           const hwManifest = this.latestFirmwareByHw ? this.latestFirmwareByHw[devHw] : null;
-          const targetLatestVer = hwManifest?.version || this.latestFirmware?.version || '1.0.2';
-          const isOutdated = rawFwVer !== null && rawFwVer !== 'unknown' && rawFwVer !== targetLatestVer;
+          const targetLatestVer = hwManifest?.version || this.latestFirmware?.version || null;
+          const isOutdated = rawFwVer !== null && rawFwVer !== 'unknown' && targetLatestVer !== null && rawFwVer !== targetLatestVer;
           const job = this.deviceToOtaJob.get(dev.device_id);
           const hasActiveOta = job && ['queued', 'downloading', 'verifying', 'rebooting'].includes(job.status);
           const isBatteryLow = dev.battery_pct !== null && dev.battery_pct < 30;
@@ -1025,8 +1025,22 @@ class DashboardApp {
 
   private updateLatestFwBadge() {
     const badge = document.getElementById('latestFwBadge');
-    if (badge && this.latestFirmware) {
-      badge.innerText = `Latest: v${this.latestFirmware.version}`;
+    const ver = this.latestFirmware?.version;
+    if (badge) {
+      badge.innerText = ver ? `Latest: v${ver}` : '—';
+    }
+    const flasherBadge = document.getElementById('flasherVersionBadge');
+    if (flasherBadge) {
+      if (ver) {
+        flasherBadge.innerText = `Firmware: v${ver}`;
+        flasherBadge.style.display = 'inline-block';
+      } else {
+        flasherBadge.style.display = 'none';
+      }
+    }
+    const step3Text = document.getElementById('flashStepFetchText');
+    if (step3Text) {
+      step3Text.innerText = ver ? `Fetch Firmware Binaries (v${ver})` : 'Fetch Firmware Binaries';
     }
   }
 
@@ -1094,7 +1108,7 @@ class DashboardApp {
 
     const outdated = onlineDevices.filter((d) => {
       const hwManifest = (this.latestFirmwareByHw && d.hw) ? this.latestFirmwareByHw[d.hw] : null;
-      const targetVer = hwManifest?.version || this.latestFirmware?.version || '1.0.2';
+      const targetVer = hwManifest?.version || this.latestFirmware?.version || 'latest';
       return d.firmware_version !== targetVer;
     });
     const targets = outdated.length > 0 ? outdated : onlineDevices;

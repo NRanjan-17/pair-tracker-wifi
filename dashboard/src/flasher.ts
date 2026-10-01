@@ -184,6 +184,9 @@ export class TrackerFlasher {
         throw new Error(`Failed to fetch firmware manifest (${manifestRes.status})`);
       }
       const manifest = await manifestRes.json();
+      const targetVersion = manifest.version;
+      const verText = targetVersion ? ` (v${targetVersion})` : '';
+      this.callbacks.onLog(`Firmware manifest loaded: version ${targetVersion || 'unknown'} (${manifest.parts?.length || 0} binary parts)\n`);
       if (!manifest.parts || manifest.parts.length === 0) {
         throw new Error(`Firmware manifest for ${detectedHw} contains no binary parts. Run "make firmware-bin" first.`);
       }
@@ -208,8 +211,8 @@ export class TrackerFlasher {
       }
 
       // Step 4: Flash firmware via esptool-js
-      this.callbacks.onStepChange(4, `Flashing firmware to ${targetLabel}...`);
-      this.callbacks.onLog(`Starting flash write for ${fileArray.length} binary partitions...\n`);
+      this.callbacks.onStepChange(4, `Flashing firmware${verText} to ${targetLabel}...`);
+      this.callbacks.onLog(`Starting flash write for ${fileArray.length} binary partitions${verText}...\n`);
 
       await esploader.writeFlash({
         fileArray,
@@ -254,7 +257,7 @@ export class TrackerFlasher {
       await this.runSerialProvisioning(serialPort, targetBaud, config, deviceToken);
 
       // Step 6: Wait for Device Announce
-      this.callbacks.onStepChange(6, 'Waiting for device to announce on WiFi...');
+      this.callbacks.onStepChange(6, `Waiting for ${targetLabel}${verText} to announce on WiFi...`);
       this.callbacks.onSwitchOnPrompt(mac);
 
       await this.waitForAnnounce(mac, config.role);

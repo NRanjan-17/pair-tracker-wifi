@@ -102,7 +102,7 @@
                 Paired Devices (<span id="pairedDevicesCount">0</span>)
               </button>
               <div class="tracker-toolbar-right">
-                <span id="latestFwBadge" class="badge badge-secondary" title="Latest released firmware version">v1.0.2</span>
+                <span id="latestFwBadge" class="badge badge-secondary" title="Latest released firmware version">—</span>
                 <button id="btnUpdateAll" class="btn btn-sm btn-primary" title="Sequentially update all outdated online trackers over WiFi">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
                   Update Outdated
@@ -153,7 +153,10 @@
           <div id="viewFlash" class="tab-content" style="display: none;">
             <div class="panel-header">
               <h2>Flash &amp; Provisioning</h2>
-              <span class="badge badge-connected" style="background: rgba(56, 189, 248, 0.12); color: var(--accent); border-color: rgba(56, 189, 248, 0.3);">Web Serial API</span>
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <span id="flasherVersionBadge" class="badge badge-connected" style="background: rgba(16, 185, 129, 0.12); color: #34d399; border-color: rgba(16, 185, 129, 0.3); display: none;">Firmware</span>
+                <span class="badge badge-connected" style="background: rgba(56, 189, 248, 0.12); color: var(--accent); border-color: rgba(56, 189, 248, 0.3);">Web Serial API</span>
+              </div>
             </div>
             <p class="panel-desc">Flash firmware binary partitions and provision WiFi credentials directly over Web Serial.</p>
 
@@ -216,7 +219,7 @@
               <div class="stepper-box">
                 <div id="stepItem1" class="step-row pending"><span class="step-num">1</span> Connect &amp; Detect Chip (Web Serial)</div>
                 <div id="stepItem2" class="step-row pending"><span class="step-num">2</span> Register Role on Hub</div>
-                <div id="stepItem3" class="step-row pending"><span class="step-num">3</span> Fetch Firmware Binaries</div>
+                <div id="stepItem3" class="step-row pending"><span class="step-num">3</span> <span id="flashStepFetchText">Fetch Firmware Binaries</span></div>
                 <div id="stepItem4" class="step-row pending"><span class="step-num">4</span> <span id="flashStepChipText">Flash Firmware (esptool-js)</span></div>
                 <div id="stepItem5" class="step-row pending"><span class="step-num">5</span> Send Provisioning Commands</div>
                 <div id="stepItem6" class="step-row pending"><span class="step-num">6</span> Announce &amp; Verify Online</div>
