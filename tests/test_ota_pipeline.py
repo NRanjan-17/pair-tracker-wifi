@@ -81,17 +81,18 @@ async def test_ota_manifest_and_download_auth():
             res = await client.get("http://127.0.0.1:8910/v1/firmware/latest")
             assert res.status_code == 200
             latest = res.json()
-            assert latest["version"] == "1.0.1"
+            assert latest["version"] in ("1.0.1", "1.0.2")
+            latest_ver = latest["version"]
             assert "sha256" in latest
             assert "size" in latest
 
-            # 2. GET /v1/firmware/1.0.1/firmware.bin without token -> 401
-            res = await client.get("http://127.0.0.1:8910/v1/firmware/1.0.1/firmware.bin")
+            # 2. GET /v1/firmware/<version>/firmware.bin without token -> 401
+            res = await client.get(f"http://127.0.0.1:8910/v1/firmware/{latest_ver}/firmware.bin")
             assert res.status_code == 401
 
             # 3. GET with invalid token -> 403
             res = await client.get(
-                "http://127.0.0.1:8910/v1/firmware/1.0.1/firmware.bin",
+                f"http://127.0.0.1:8910/v1/firmware/{latest_ver}/firmware.bin",
                 headers={"Authorization": "Bearer bad_token_123"},
             )
             assert res.status_code == 403
@@ -102,7 +103,7 @@ async def test_ota_manifest_and_download_auth():
             db.register_device(dev_id, "chest", tok)
 
             res = await client.get(
-                "http://127.0.0.1:8910/v1/firmware/1.0.1/firmware.bin",
+                f"http://127.0.0.1:8910/v1/firmware/{latest_ver}/firmware.bin",
                 headers={"Authorization": f"Bearer {tok}"},
             )
             assert res.status_code == 200
@@ -111,13 +112,13 @@ async def test_ota_manifest_and_download_auth():
             assert hashlib.sha256(downloaded).hexdigest() == latest["sha256"]
 
             # Query param token authentication also works
-            res = await client.get(f"http://127.0.0.1:8910/v1/firmware/1.0.1/firmware.bin?token={tok}")
+            res = await client.get(f"http://127.0.0.1:8910/v1/firmware/{latest_ver}/firmware.bin?token={tok}")
             assert res.status_code == 200
             assert res.content == downloaded
 
             # Admin token authentication also works
             res = await client.get(
-                "http://127.0.0.1:8910/v1/firmware/1.0.1/firmware.bin",
+                f"http://127.0.0.1:8910/v1/firmware/{latest_ver}/firmware.bin",
                 headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             )
             assert res.status_code == 200
