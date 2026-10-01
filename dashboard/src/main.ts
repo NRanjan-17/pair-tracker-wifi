@@ -344,7 +344,7 @@ class DashboardApp {
     this.ws.onopen = () => {
       badge.className = 'badge badge-connected';
       badge.innerText = 'Connected Live';
-      this.addLog('sys', `Connected to Eidon server via WebSocket (${wsUrl})`, 'WS');
+      this.addLog('sys', `Connected to Pair server via WebSocket (${wsUrl})`, 'WS');
     };
 
     this.ws.onmessage = (event) => {
@@ -594,7 +594,8 @@ class DashboardApp {
 
       const rawFwVer = dev && dev.firmware_version ? dev.firmware_version : null;
       const devHw = dev?.hw || 'esp12e';
-      const targetLatestVer = (this.latestFirmwareByHw && this.latestFirmwareByHw[devHw]) || (this.latestFirmware ? this.latestFirmware.version : '1.0.2');
+      const hwManifest = this.latestFirmwareByHw ? this.latestFirmwareByHw[devHw] : null;
+      const targetLatestVer = hwManifest?.version || this.latestFirmware?.version || '1.0.2';
       const fwDisplay = rawFwVer ? (isOnline ? `v${rawFwVer}` : `v${rawFwVer} (offline)`) : '—';
       const isOutdated = isOnline && rawFwVer !== null && rawFwVer !== 'unknown' && rawFwVer !== targetLatestVer;
       const isProtoOutdated = dev && dev.protocol_outdated;
@@ -712,7 +713,8 @@ class DashboardApp {
           const rawFwVer = dev.firmware_version || null;
           const fwDisplay = rawFwVer ? `v${rawFwVer}` : '—';
           const devHw = dev.hw || 'esp12e';
-          const targetLatestVer = (this.latestFirmwareByHw && this.latestFirmwareByHw[devHw]) || (this.latestFirmware ? this.latestFirmware.version : '1.0.2');
+          const hwManifest = this.latestFirmwareByHw ? this.latestFirmwareByHw[devHw] : null;
+          const targetLatestVer = hwManifest?.version || this.latestFirmware?.version || '1.0.2';
           const isOutdated = rawFwVer !== null && rawFwVer !== 'unknown' && rawFwVer !== targetLatestVer;
           const job = this.deviceToOtaJob.get(dev.device_id);
           const hasActiveOta = job && ['queued', 'downloading', 'verifying', 'rebooting'].includes(job.status);
@@ -1091,7 +1093,8 @@ class DashboardApp {
     }
 
     const outdated = onlineDevices.filter((d) => {
-      const targetVer = (this.latestFirmwareByHw && d.hw && this.latestFirmwareByHw[d.hw]) || this.latestFirmware?.version;
+      const hwManifest = (this.latestFirmwareByHw && d.hw) ? this.latestFirmwareByHw[d.hw] : null;
+      const targetVer = hwManifest?.version || this.latestFirmware?.version || '1.0.2';
       return d.firmware_version !== targetVer;
     });
     const targets = outdated.length > 0 ? outdated : onlineDevices;

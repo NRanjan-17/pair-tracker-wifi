@@ -422,7 +422,7 @@ void TrackerNetwork::process() {
         pinMode(0, INPUT_PULLUP);
         pinMode(2, INPUT_PULLUP);
         digitalWrite(2, HIGH);
-        pinMode(15, INPUT_PULLDOWN);
+        pinMode(15, INPUT); // ESP-12E has external hardware pull-down on GPIO15
         delay(50);
         ESP.reset(); // Hardware reset (watchdog trigger)
 #elif defined(ESP32)

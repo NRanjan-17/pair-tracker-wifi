@@ -445,7 +445,7 @@ def generate_bvh(
 
     lines: List[str] = []
     # Header comment documenting axis convention, Euler order, and units
-    lines.append("# Eidon Mocap BVH Export")
+    lines.append("# Pair Mocap BVH Export")
     lines.append(f"# Session ID: {session_id}")
     lines.append("# Coordinate Frame: Right-handed Y-up (Three.js world: +X right, +Y up, +Z forward)")
     lines.append("# Rotation Channels: Zrotation Xrotation Yrotation (Euler order: ZXY)")

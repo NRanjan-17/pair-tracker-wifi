@@ -5,8 +5,12 @@
 #include "../boards/board.h"
 #include "../core/Protocol.h"
 
-#ifndef EIDON_MOUNT_CORRECTION
-#define EIDON_MOUNT_CORRECTION 1
+#ifndef PAIR_MOUNT_CORRECTION
+#if defined(EIDON_MOUNT_CORRECTION)
+#define PAIR_MOUNT_CORRECTION EIDON_MOUNT_CORRECTION
+#else
+#define PAIR_MOUNT_CORRECTION 1
+#endif
 #endif
 
 class HalIMUBus {

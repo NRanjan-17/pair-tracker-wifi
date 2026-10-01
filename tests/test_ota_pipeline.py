@@ -14,6 +14,7 @@ import websockets
 os.environ["DATA_DIR"] = tempfile.mkdtemp()
 os.environ["SESSIONS_DIR"] = tempfile.mkdtemp()
 os.environ["SQLITE_DB_PATH"] = str(Path(os.environ["DATA_DIR"]) / "test_ota.db")
+os.environ["PAIR_ADMIN_TOKEN"] = "test_admin_secret"
 os.environ["EIDON_ADMIN_TOKEN"] = "test_admin_secret"
 
 import shutil

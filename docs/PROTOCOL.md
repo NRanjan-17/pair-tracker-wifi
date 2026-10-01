@@ -152,7 +152,7 @@ $$\Delta = (\text{seq} - \text{last\_seq}) \ \& \ \text{0xFFFF}$$
 ### 3.4 Mount Correction
 By default, trackers apply a mounting correction corresponding to a 180° rotation around the Z-axis:
 $$(w, -x, -y, z)$$
-This is enabled via compile-time flag `#define EIDON_MOUNT_CORRECTION 1`.
+This is enabled via compile-time flag `#define PAIR_MOUNT_CORRECTION 1`.
 
 ---
 

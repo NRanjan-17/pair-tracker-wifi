@@ -16,6 +16,7 @@ import uvicorn
 os.environ["DATA_DIR"] = tempfile.mkdtemp()
 os.environ["SESSIONS_DIR"] = tempfile.mkdtemp()
 os.environ["SQLITE_DB_PATH"] = str(Path(os.environ["DATA_DIR"]) / "test_mocap_export.db")
+os.environ["PAIR_ADMIN_TOKEN"] = "test_admin_secret"
 os.environ["EIDON_ADMIN_TOKEN"] = "test_admin_secret"
 
 from server.config import SESSIONS_DIR
@@ -295,7 +296,7 @@ async def test_full_session_mocap_export_pipeline():
             bvh_text = bvh_res.text
 
             # Verify BVH header comment documenting conventions
-            assert "# Eidon Mocap BVH Export" in bvh_text
+            assert "# Pair Mocap BVH Export" in bvh_text
             assert "Right-handed Y-up" in bvh_text
             assert "Zrotation Xrotation Yrotation" in bvh_text
             assert "Euler order: ZXY" in bvh_text

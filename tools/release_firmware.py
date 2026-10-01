@@ -52,6 +52,11 @@ def release_target(hw: str, version: str):
         return False
 
     bin_path = cfg["bin_path"]
+    if not bin_path.exists() and hw == "esp32c6":
+        alt_path = REPO_ROOT / "firmware" / ".pio" / "build" / "esp32c6" / "firmware.bin"
+        if alt_path.exists():
+            bin_path = alt_path
+
     if not bin_path.exists():
         print(f"Warning: Compiled binary for {hw} not found at {bin_path}")
         print(f"  Run: pio run -d firmware -e {cfg['build_env']}")

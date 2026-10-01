@@ -76,7 +76,7 @@ export class AvatarRig {
       emissiveIntensity: 0.12,
     });
 
-    // 3. Eidon IMU Tracker Puck Enclosure (Dark matte composite)
+    // 3. Pair IMU Tracker Puck Enclosure (Dark matte composite)
     this.trackerPuckMaterial = new THREE.MeshStandardMaterial({
       color: 0x1e293b,
       metalness: 0.55,
@@ -292,7 +292,7 @@ export class AvatarRig {
       meshes.push(cylMesh);
     }
 
-    // C. Physical Eidon IMU Tracker Puck Module Mounted to Limb
+    // C. Physical Pair IMU Tracker Puck Module Mounted to Limb
     // Represents the actual physical hardware module and displays a glowing status ring!
     // Mount tracker pucks only to actual mocap tracker roles, aligned perfectly on front centerline
     const TRACKED_ROLES = [

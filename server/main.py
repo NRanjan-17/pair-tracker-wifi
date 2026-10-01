@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI):
     mdns_service.stop()
 
 app = FastAPI(
-    title="Eidon Tracker WiFi API",
+    title="Pair Tracker WiFi API",
     version="1.0.0",
     description="Local backend for WiFi-based IMU body trackers",
     lifespan=lifespan,

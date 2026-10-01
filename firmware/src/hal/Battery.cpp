@@ -39,6 +39,14 @@ void HalBattery::read(uint8_t& percentage, uint16_t& millivolts) {
 
     millivolts = static_cast<uint16_t>(battMv);
 
+    // If reading is below 1000 mV (1.0V), no battery is physically connected;
+    // tracker is operating directly on continuous USB power.
+    if (battMv < 1000) {
+        percentage = 100;
+        millivolts = 5000;
+        return;
+    }
+
     // LiPo curve: 3000 mV (0%) to 4200 mV (100%)
     if (battMv >= 4200) {
         percentage = 100;

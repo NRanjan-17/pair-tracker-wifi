@@ -112,7 +112,7 @@ bool HalIMUBus::update() {
                 float raw_y = sensorValue.un.gameRotationVector.j;
                 float raw_z = sensorValue.un.gameRotationVector.k;
 
-#if EIDON_MOUNT_CORRECTION
+#if PAIR_MOUNT_CORRECTION
                 // 180 deg rotation around Z-axis: (w, -x, -y, z)
                 current_qw = raw_w;
                 current_qx = -raw_x;

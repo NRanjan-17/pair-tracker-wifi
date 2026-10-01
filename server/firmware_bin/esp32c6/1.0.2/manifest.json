@@ -1,0 +1,7 @@
+{
+  "version": "1.0.2",
+  "hw": "esp32c6",
+  "sha256": "6cb04b5716b90bfb16c35098ebe89648a316d7d3f2e513f55bfa0a3b0514f8cd",
+  "size": 1315376,
+  "min_protocol": 1
+}

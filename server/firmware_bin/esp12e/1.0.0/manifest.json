@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "hw": "esp12e",
-  "sha256": "5c86a06c84f184b1f0b5f87f3370123948542c607cba59f647289ec4c45b6fb8",
-  "size": 477184,
+  "sha256": "806169f6509ba9cb97b486b1e2e4590d18bd03505223f3cdaacebfc760301380",
+  "size": 478352,
   "min_protocol": 1
 }

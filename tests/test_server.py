@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 os.environ["DATA_DIR"] = tempfile.mkdtemp()
 os.environ["SESSIONS_DIR"] = tempfile.mkdtemp()
 os.environ["SQLITE_DB_PATH"] = str(Path(os.environ["DATA_DIR"]) / "test.db")
+os.environ["PAIR_ADMIN_TOKEN"] = "test_admin_secret"
 os.environ["EIDON_ADMIN_TOKEN"] = "test_admin_secret"
 
 from server.config import ADMIN_TOKEN

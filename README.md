@@ -1,4 +1,4 @@
-# Eidon Tracker WiFi
+# Pair Tracker WiFi
 
 Autonomous, open-source, WiFi-based full-body motion capture (mocap) tracking system supporting **Seeed Studio XIAO ESP32-C6** (primary target) and **ESP-12E / NodeMCU ESP8266** (secondary target) microcontrollers with **BNO085 9-DOF IMUs**.
 
@@ -130,7 +130,7 @@ python3 tools/release_firmware.py 1.0.2
 ## Repository Layout
 
 ```
-eidon-tracker-wifi/
+pair-tracker-wifi/
 ├── Makefile                 # Top-level workflow targets (setup, doctor, test, run-*, pio-build)
 ├── README.md                # Project overview and quick start guide
 ├── LICENSE                  # MIT License
@@ -213,4 +213,4 @@ eidon-tracker-wifi/
 
 ## License
 
-Eidon Tracker WiFi is open-source software licensed under the MIT License. See [LICENSE](LICENSE) for details.
+Pair Tracker WiFi is open-source software licensed under the MIT License. See [LICENSE](LICENSE) for details.
